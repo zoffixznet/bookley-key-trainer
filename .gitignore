@@ -2,3 +2,4 @@
 *.pdf
 !docs/**/*.pdf
 scratch/
+smoke-screenshot.png

@@ -155,8 +155,11 @@ fn manuscript(app: &App, ui: &mut egui::Ui) {
         }
         lines.last_mut().unwrap().push(i);
         col += 1;
-        // Prefer to wrap after spaces near the edge.
-        if matches!(item, Expected::Char(' ')) && col > cols.saturating_sub(6) {
+        // Prefer to wrap after spaces near the edge; always wrap after a newline so
+        // paragraph breaks read as paragraph breaks.
+        if matches!(item, Expected::Char('\n'))
+            || (matches!(item, Expected::Char(' ')) && col > cols.saturating_sub(6))
+        {
             lines.push(Vec::new());
             col = 0;
         }
@@ -206,7 +209,12 @@ fn manuscript(app: &App, ui: &mut egui::Ui) {
                     color,
                 );
             } else {
-                let display = if ch == ' ' { ' ' } else { ch };
+                // Show newlines as a dim pilcrow so the user knows to press Enter.
+                let (display, color) = if ch == '\n' {
+                    ('\u{00B6}', color.linear_multiply(0.6))
+                } else {
+                    (ch, color)
+                };
                 painter.text(
                     egui::pos2(x, y),
                     Align2::LEFT_CENTER,
