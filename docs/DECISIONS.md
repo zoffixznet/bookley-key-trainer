@@ -187,3 +187,18 @@ each; newest at the bottom of each section.
 - Random-keys mode draws from the full physical keyboard including non-character keys
   (arrows, function keys, nav cluster, Tab/Enter/Esc). Dev keys (F9/F10/F12) are excluded
   from the Random pool so they never clash with dev shortcuts.
+
+## Key sound
+
+- The typewriter click is synthesized procedurally (filtered-noise burst over a resonant
+  thump, deterministic buffers, a few percent of per-press pitch/volume variation) so no
+  sample files are bundled and there is nothing to license. rodio is pulled with only its
+  playback feature; the click PCM never needs decoders.
+- The audio device opens lazily on the first click. If it fails (headless run, no
+  device), sound latches off after one log line and the app carries on silently, so the
+  smoke test and CI need no audio stack at runtime. Building does require the ALSA dev
+  headers (libasound2-dev), now checked by make deps.
+- The config field was renamed sound -> key_sound (serde default true) so configs saved
+  before the feature, including ones carrying the never-surfaced sound=false stub, come
+  up with the click on by default. The top-bar switch is session-only; Settings holds the
+  launch default.

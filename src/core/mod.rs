@@ -9,6 +9,7 @@ pub mod metrics;
 pub mod normalize;
 pub mod paths;
 pub mod session;
+pub mod sound;
 pub mod stats_store;
 pub mod text_source;
 pub mod wordlist;

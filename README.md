@@ -15,9 +15,10 @@ make run
 
 That builds the release binary and launches the app. `make help` lists every target.
 
-Requirements: a Rust toolchain (https://rustup.rs) and the usual Linux GUI libraries
-(X11/Wayland, OpenGL or Vulkan). No sudo is needed for the build. `make deps` sanity
-checks the toolchain.
+Requirements: a Rust toolchain (https://rustup.rs), the usual Linux GUI libraries
+(X11/Wayland, OpenGL or Vulkan), and the ALSA dev headers for the typewriter key sound
+(`sudo apt install libasound2-dev` on Debian/Ubuntu). `make deps` sanity checks the
+toolchain and libraries.
 
 ## What's inside
 
@@ -41,6 +42,11 @@ mode Backspace is a drillable key like any other. Any session can be paused (Spa
 resumes); paused time never counts toward the metrics, and the target text is veiled so
 it cannot be read ahead. Paste and Book sessions have a "Reset stats" control that
 zeroes the timer and metrics without losing your place in the text.
+
+Every keypress lands with a synthesized typewriter click, with a deeper thock for Space,
+Enter, and Backspace. The top-bar Sound switch controls the running session; Settings
+sets whether it starts on or off (on by default). The click is generated in code (no
+sample files), and on a machine with no audio device the app simply stays silent.
 
 Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency are
 shown while you type; the results screen adds a WPM-over-time graph (labeled time axis

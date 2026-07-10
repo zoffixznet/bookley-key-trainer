@@ -13,12 +13,13 @@ help: ## List every target with a one-line description
 	@echo "Bookley Key Trainer - make targets:"
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-deps: ## Verify the toolchain (no sudo needed for the Rust build)
+deps: ## Verify the toolchain and required system libraries
 	@command -v $(CARGO) >/dev/null || { echo "cargo not found: install Rust via https://rustup.rs"; exit 1; }
 	@command -v cc >/dev/null || { echo "cc not found: install a C toolchain (build-essential)"; exit 1; }
 	@command -v pkg-config >/dev/null || { echo "pkg-config not found"; exit 1; }
+	@pkg-config --exists alsa || { echo "ALSA dev headers not found: sudo apt install libasound2-dev (needed for the typewriter key sound)"; exit 1; }
 	@rustc --version && cargo --version
-	@echo "Toolchain OK. GUI needs the usual X11/Wayland dev libs (present on this box)."
+	@echo "Toolchain OK. GUI needs the usual X11/Wayland dev libs; audio needs libasound2-dev."
 
 build: ## Compile the app (release)
 	$(CARGO) build --release

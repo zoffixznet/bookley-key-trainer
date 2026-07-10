@@ -110,6 +110,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
+                theme::control_row(ui, "Key sound on launch:", |ui| {
+                    for (val, label) in [(true, "On"), (false, "Off")] {
+                        if ui
+                            .selectable_label(app.config.key_sound == val, label)
+                            .clicked()
+                        {
+                            app.config.key_sound = val;
+                            changed = true;
+                        }
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(
+                        "The top-bar Sound switch controls the running session; this \
+sets how it starts.",
+                    )
+                    .color(p.ghost)
+                    .size(12.0),
+                );
                 if ui
                     .checkbox(
                         &mut app.config.reduced_motion,

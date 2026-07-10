@@ -15,6 +15,7 @@ use crate::core::keys;
 use crate::core::metrics::SessionResult;
 use crate::core::paths;
 use crate::core::session::{PauseClock, Progress, Session};
+use crate::core::sound::{ClickKind, KeySound};
 use crate::core::stats_store::Stats;
 use crate::core::text_source::{PasteSource, RandomSource, Target, TextSource, WordSource};
 use crate::ui::keyboard::FlashState;
@@ -147,6 +148,12 @@ pub struct App {
     // Keyboard flash animation state.
     pub flash: FlashState,
 
+    // Typewriter key sound: session on/off (launch default comes from config), the
+    // lazily opened engine, and a latch so a missing audio device logs exactly once.
+    pub sound_on: bool,
+    key_sound: Option<KeySound>,
+    sound_failed: bool,
+
     // Book mode.
     pub store: BookStore,
     pub agent: AgentClient,
@@ -202,6 +209,7 @@ impl App {
             .unwrap_or_else(|_| plugin_root.join("novelist"));
         let agent = AgentClient::new(runner.clone(), plugin_dir);
 
+        let sound_on = config.key_sound;
         let mut app = App {
             config,
             stats,
@@ -218,6 +226,9 @@ impl App {
             word_src: WordSource::new(),
             random_src: None,
             flash: FlashState::default(),
+            sound_on,
+            key_sound: None,
+            sound_failed: false,
             store,
             agent,
             runner,
@@ -590,6 +601,28 @@ impl App {
         }
     }
 
+    /// Play a typewriter click if sound is on. The output device opens lazily on the
+    /// first click; when there is no device (headless runs, CI) sound disables itself
+    /// with a single log line and the app carries on silently.
+    pub fn play_click(&mut self, kind: ClickKind) {
+        if !self.sound_on || self.sound_failed {
+            return;
+        }
+        if self.key_sound.is_none() {
+            match KeySound::init() {
+                Ok(ks) => self.key_sound = Some(ks),
+                Err(e) => {
+                    tracing::warn!("key sound disabled: {e}");
+                    self.sound_failed = true;
+                    return;
+                }
+            }
+        }
+        if let Some(ks) = &self.key_sound {
+            ks.play(kind);
+        }
+    }
+
     /// Handle keyboard input for the active typing session.
     fn handle_typing_input(&mut self, ctx: &egui::Context) {
         if self.session.is_none() || self.screen != Screen::Typing {
@@ -612,6 +645,24 @@ impl App {
                 self.begin_after_gate();
             }
             return;
+        }
+        // Typewriter click on every fresh press while actually typing (correct and
+        // incorrect alike); a deeper thock for Space, Enter, and Backspace.
+        for ev in &events {
+            if let Event::Key {
+                key,
+                pressed: true,
+                repeat: false,
+                ..
+            } = ev
+            {
+                let kind = if matches!(*key, Key::Space | Key::Enter | Key::Backspace) {
+                    ClickKind::Deep
+                } else {
+                    ClickKind::Normal
+                };
+                self.play_click(kind);
+            }
         }
         let now = self.session_secs();
         // Random mode drills Backspace as an ordinary key; the other modes use it to
@@ -1309,6 +1360,30 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                     }
                     ui.label(
                         egui::RichText::new("KEYBOARD")
+                            .color(p.ghost)
+                            .size(10.0)
+                            .extra_letter_spacing(1.2),
+                    );
+                    ui.add_space(14.0);
+                    // Typewriter-sound session toggle; the launch default lives in
+                    // Settings and is not overwritten by this switch.
+                    let sound_text = if app.sound_on {
+                        egui::RichText::new("On").color(p.verdigris).strong()
+                    } else {
+                        egui::RichText::new("Off").color(p.paper)
+                    };
+                    if ui
+                        .selectable_label(app.sound_on, sound_text)
+                        .on_hover_text(
+                            "Typewriter key sound for this session. The launch default \
+is in Settings.",
+                        )
+                        .clicked()
+                    {
+                        app.sound_on = !app.sound_on;
+                    }
+                    ui.label(
+                        egui::RichText::new("SOUND")
                             .color(p.ghost)
                             .size(10.0)
                             .extra_letter_spacing(1.2),

@@ -120,7 +120,11 @@ pub struct Config {
     pub error_mode: ErrorMode,
     pub theme: Theme,
     pub caret: CaretStyle,
-    pub sound: bool,
+    /// Typewriter key sound at launch (the top-bar toggle controls the running session).
+    /// Renamed from the unused legacy `sound` field so existing configs pick up the
+    /// on-by-default behavior; the old key is ignored on load.
+    #[serde(default = "default_true")]
+    pub key_sound: bool,
     pub reduced_motion: bool,
     /// Default target language for new books (free text).
     pub default_language: String,
@@ -161,7 +165,7 @@ impl Default for Config {
             // The light "foolscap" theme is the flagship default; a saved choice wins.
             theme: Theme::Light,
             caret: CaretStyle::Block,
-            sound: false,
+            key_sound: true,
             reduced_motion: false,
             default_language: "English".to_string(),
             random_round_len: 30,
@@ -226,6 +230,21 @@ mod tests {
         assert_eq!(back.content_mode, ContentMode::Book);
         assert_eq!(back.default_language, "Deutsch");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Configs saved before the sound feature (including ones carrying the unused
+    /// legacy `sound = false` stub) must come up with the key sound ON.
+    #[test]
+    fn key_sound_defaults_on_and_ignores_legacy_field() {
+        let full = toml::to_string(&Config::default()).unwrap();
+        let without: String = full
+            .lines()
+            .filter(|l| !l.starts_with("key_sound"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let legacy = format!("{without}\nsound = false\n");
+        let c: Config = toml::from_str(&legacy).unwrap();
+        assert!(c.key_sound, "missing key_sound must default to on");
     }
 
     #[test]
