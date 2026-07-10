@@ -142,7 +142,8 @@ impl Default for Config {
             reduced_motion: false,
             default_language: "English".to_string(),
             random_round_len: 30,
-            book_model: "sonnet".to_string(),
+            // Spec: novel generation defaults to Opus; changeable in Settings.
+            book_model: "opus".to_string(),
         }
     }
 }

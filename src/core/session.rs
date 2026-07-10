@@ -124,10 +124,36 @@ impl Session {
         self.apply(correct, Some(key), now_secs)
     }
 
+    /// Whether the cursor is on a word boundary (space / newline).
+    fn at_word_boundary(&self) -> bool {
+        matches!(
+            self.target.items.get(self.cursor),
+            Some(Expected::Char(' ')) | Some(Expected::Char('\n'))
+        )
+    }
+
+    /// Whether the current word (word_start..cursor) contains any wrong positions.
+    fn word_has_errors(&self) -> bool {
+        self.status[self.word_start..self.cursor]
+            .iter()
+            .any(|s| *s == CharStatus::Wrong)
+    }
+
     fn apply(&mut self, correct: bool, phys: Option<Key>, now_secs: f64) -> Progress {
+        // Stop-on-word: at a word boundary with unfixed errors in the word, block even a
+        // correct boundary press; the user must backspace and fix the word first.
+        let word_block = self.error_mode == ErrorMode::Word
+            && self.at_word_boundary()
+            && self.word_has_errors();
+        let counted_correct = correct && !word_block;
+
         let latency = self.latency_ms(now_secs);
-        self.metrics.record_keystroke(phys, correct, latency);
+        self.metrics.record_keystroke(phys, counted_correct, latency);
         self.metrics.tick(now_secs);
+
+        if word_block {
+            return Progress::Blocked;
+        }
 
         if correct {
             self.status[self.cursor] = CharStatus::Correct;
@@ -139,7 +165,9 @@ impl Session {
             }
         } else {
             match self.error_mode {
-                ErrorMode::Off => {
+                // Type-through, and stop-on-word within a word: mark wrong and advance.
+                // (Word mode enforces correction at the word boundary above.)
+                ErrorMode::Off | ErrorMode::Word => {
                     self.status[self.cursor] = CharStatus::Wrong;
                     self.advance();
                     if self.complete {
@@ -148,7 +176,7 @@ impl Session {
                         Progress::AdvancedWithError
                     }
                 }
-                ErrorMode::Letter | ErrorMode::Word => {
+                ErrorMode::Letter => {
                     // Mark wrong but do not advance; user must produce the right key.
                     self.status[self.cursor] = CharStatus::Wrong;
                     Progress::Blocked
@@ -190,8 +218,18 @@ impl Session {
         self.apply(true, phys, now_secs)
     }
 
-    /// Dev: complete the current "page" (here: the whole current target) as correct.
-    /// For the app, one target is a page; the chapter completion below handles multi-page.
+    /// Dev: complete the current "page" (a bounded chunk of the target) as correct.
+    /// A page is ~200 items, roughly what the typing stage shows at once.
+    pub fn dev_complete_page(&mut self, now_secs: f64) {
+        let mut n = 0;
+        while !self.complete && n < 200 {
+            let phys = self.expected().and_then(|e| e.physical_key());
+            self.apply(true, phys, now_secs);
+            n += 1;
+        }
+    }
+
+    /// Dev: complete the whole current target (chapter / full text) as correct.
     pub fn dev_complete_all(&mut self, now_secs: f64) {
         while !self.complete {
             let phys = self.expected().and_then(|e| e.physical_key());
@@ -227,6 +265,35 @@ mod tests {
         assert_eq!(s.cursor, 0);
         assert_eq!(s.input_char('a', 0.2), Progress::Advanced);
         assert_eq!(s.cursor, 1);
+    }
+
+    #[test]
+    fn stop_on_word_blocks_boundary_until_fixed() {
+        let mut s = Session::new(Target::from_text("ab cd", "t"), ErrorMode::Word);
+        // Wrong first letter advances within the word (unlike Letter mode).
+        assert_eq!(s.input_char('x', 0.1), Progress::AdvancedWithError);
+        assert_eq!(s.input_char('b', 0.2), Progress::Advanced);
+        // At the space boundary with an unfixed error: blocked, even though space is right.
+        assert_eq!(s.input_char(' ', 0.3), Progress::Blocked);
+        // Fix the word: backspace twice, retype correctly.
+        s.backspace();
+        s.backspace();
+        assert_eq!(s.input_char('a', 0.4), Progress::Advanced);
+        assert_eq!(s.input_char('b', 0.5), Progress::Advanced);
+        assert_eq!(s.input_char(' ', 0.6), Progress::Advanced);
+        assert_eq!(s.input_char('c', 0.7), Progress::Advanced);
+        assert_eq!(s.input_char('d', 0.8), Progress::Complete);
+    }
+
+    #[test]
+    fn dev_complete_page_is_bounded() {
+        let text = "x".repeat(500);
+        let mut s = Session::new(Target::from_text(&text, "t"), ErrorMode::Off);
+        s.dev_complete_page(1.0);
+        assert!(!s.is_complete());
+        assert_eq!(s.cursor, 200);
+        s.dev_complete_all(2.0);
+        assert!(s.is_complete());
     }
 
     #[test]

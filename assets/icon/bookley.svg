@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Bookley Key Trainer icon: a mechanical keycap that reads as an open book, with a
+       verdigris caret. Palette: ink (#14110E), brass (#C9A24B), verdigris (#3E9C8C),
+       paper (#E8E1D3). -->
+  <defs>
+    <linearGradient id="cap" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A231C"/>
+      <stop offset="1" stop-color="#14110E"/>
+    </linearGradient>
+    <linearGradient id="top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A3025"/>
+      <stop offset="1" stop-color="#241D16"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Keycap body -->
+  <rect x="24" y="24" width="208" height="208" rx="36" fill="url(#cap)" stroke="#C9A24B" stroke-width="4"/>
+  <!-- Keycap top surface (dished) -->
+  <rect x="44" y="40" width="168" height="150" rx="24" fill="url(#top)"/>
+
+  <!-- Open book on the keycap: two pages meeting at a spine -->
+  <g>
+    <!-- left page -->
+    <path d="M128 78 C 104 66, 78 66, 62 74 L 62 158 C 78 150, 104 150, 128 162 Z"
+          fill="#E8E1D3" stroke="#C9A24B" stroke-width="3" stroke-linejoin="round"/>
+    <!-- right page -->
+    <path d="M128 78 C 152 66, 178 66, 194 74 L 194 158 C 178 150, 152 150, 128 162 Z"
+          fill="#D8D0BF" stroke="#C9A24B" stroke-width="3" stroke-linejoin="round"/>
+    <!-- spine -->
+    <line x1="128" y1="78" x2="128" y2="162" stroke="#7C7263" stroke-width="3"/>
+    <!-- page lines (left) -->
+    <line x1="74" y1="92" x2="116" y2="98" stroke="#7C7263" stroke-width="3" stroke-linecap="round"/>
+    <line x1="74" y1="108" x2="116" y2="114" stroke="#7C7263" stroke-width="3" stroke-linecap="round"/>
+    <line x1="74" y1="124" x2="116" y2="130" stroke="#7C7263" stroke-width="3" stroke-linecap="round"/>
+    <!-- page lines (right) -->
+    <line x1="140" y1="98" x2="182" y2="92" stroke="#7C7263" stroke-width="3" stroke-linecap="round"/>
+    <line x1="140" y1="114" x2="182" y2="108" stroke="#7C7263" stroke-width="3" stroke-linecap="round"/>
+  </g>
+
+  <!-- Verdigris blinking caret sitting on the keycap base line -->
+  <rect x="120" y="196" width="16" height="26" rx="3" fill="#3E9C8C"/>
+</svg>
