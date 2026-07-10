@@ -2,4 +2,5 @@
 //! wires them together behind a `clap` front end.
 
 pub mod core;
+pub mod smoke;
 pub mod ui;

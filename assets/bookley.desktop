@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Bookley Key Trainer
+GenericName=Typing Trainer
+Comment=Practice typing while an AI writes a novel, one chapter at a time
+Exec=bookley
+Icon=bookley
+Terminal=false
+Categories=Education;Utility;
+Keywords=typing;keyboard;trainer;touch typing;book;
+StartupWMClass=bookley
