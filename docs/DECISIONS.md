@@ -73,11 +73,9 @@ each; newest at the bottom of each section.
 
 ## Fonts / assets
 
-- Fonts: to keep the repo self-contained and avoid shipping large binary font files we may
-  not have licenses staged for, the app embeds fonts only if present under
-  `assets/fonts/`; otherwise it falls back to egui's bundled fonts and applies the palette
-  + sizing so the identity still reads. Any embedded font's license is recorded in NOTICE.
-  (See NOTICE / README for the current state.)
+- Fonts (superseded, see the user-review batch below): the first build shipped no font
+  files and used egui's bundled fonts. The visual redesign now embeds IBM Plex Sans,
+  IBM Plex Mono, and Young Serif (all OFL, ~450KB total, licenses in NOTICE).
 
 ## UI / behavior
 
@@ -101,6 +99,41 @@ each; newest at the bottom of each section.
   completes the whole target. F9/F10/F12 are excluded from the Random pool.
 - Hidden `--screenshot PATH [--screen NAME]` flags boot the real app, render frames, and
   save a PNG; used to verify X11 rendering from scripts without a human watching.
+
+## User-review batch (2026-07-10)
+
+- Single-word mode became a timed multi-word drill (a flowing stream that refills as you
+  type); Random keys uses the same drill timer since it was cheap and consistent. The
+  duration presets are 30s/1m/2m/3m/5m, default 2 minutes. The old "keys per round"
+  setting is gone from the UI (the timer governs); the config field remains for
+  compatibility.
+- Pause: a PauseClock subtracts paused gaps from the injected wall clock, so WPM and
+  consistency are computed over active time only (unit test asserts a 60s pause changes
+  nothing). While paused, input is ignored and the target is veiled so it cannot be read
+  ahead.
+- Typing-target normalization: implemented with an explicit punctuation/space map plus
+  NFKD decomposition (unicode-normalization crate), dropping combining marks and
+  anything else non-ASCII. deunicode was considered but rejected: it maps symbols to
+  spelled-out words ((TM), etc.), which is wrong for a typing target. Disk files and
+  exports keep original Unicode; only the displayed/compared target is normalized.
+- The drawn keyboard is a full-size 104-key board (F-row grouping, real key widths, both
+  Shifts, Caps, modifier row, nav cluster, inverted-T arrows, numpad with tall/wide
+  keys). The numpad is shown by default (a full-size board is the point) with a Settings
+  toggle. Modifiers, numpad, and the PrtSc cluster are drawn for realism but are not
+  typing targets (egui reports modifiers as state, not keypresses, and has no numpad key
+  identities); Guide mode rings Shift alongside the base key for shifted targets.
+- Exports open with xdg-open, spawned detached and reaped on a background thread; a
+  failed open degrades to showing the path only.
+- The last-chapter checkbox injects an explicit conclude directive (replacing the normal
+  arc guidance) and marks the book concluded on success; concluded books show a finished
+  state instead of the generate block, and rewrites stay available.
+- Fonts are now embedded (IBM Plex Sans, IBM Plex Mono, Young Serif, all OFL, recorded
+  in NOTICE), superseding the earlier fonts-optional decision: the visual redesign
+  needed a real serif/mono identity. The light foolscap theme is the default for fresh
+  configs; a saved choice wins.
+- Results: Enter triggers the primary action, guarded for 400ms after completion so the
+  finishing keystroke cannot immediately restart; book completions show "Continue the
+  book" instead of "Type again".
 
 ## Content / metrics
 

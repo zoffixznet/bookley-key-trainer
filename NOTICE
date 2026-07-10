@@ -13,9 +13,18 @@ Only the word column is used; the dice-roll numbers were dropped.
 
 Fonts
 -----
-No third-party font files are bundled; the app uses egui's built-in fonts
-(egui itself bundles them under their own open licenses). If a font is ever
-added under assets/ and embedded, record its name and license here.
+The following fonts are bundled under assets/fonts/ and embedded in the
+binary. All are licensed under the SIL Open Font License 1.1
+(https://openfontlicense.org/):
+
+  IBM Plex Sans (Regular)  Copyright IBM Corp.
+    https://github.com/IBM/plex
+  IBM Plex Mono (Regular)  Copyright IBM Corp.
+    https://github.com/IBM/plex
+  Young Serif (Regular)  Copyright The Young Serif Project Authors
+    https://github.com/noirblancrouge/YoungSerif
+
+egui's built-in fonts remain as fallbacks under their own open licenses.
 
 Reference: AI-writing idiosyncrasy taxonomy
 -------------------------------------------

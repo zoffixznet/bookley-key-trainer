@@ -24,17 +24,30 @@ checks the toolchain.
 Two independent axes define a practice session, both switchable at runtime from the top
 bar (and in Settings):
 
-- **Keyboard display**: *Guide* (on-screen keyboard highlights the next key to press),
-  *Feedback* (no hint; just-pressed keys flash briefly), *Hidden* (no keyboard).
-- **Content**: *Random keys* (the whole physical keyboard, including arrows, function
-  keys, and the nav cluster), *Single word* (bundled word list), *Paste text* (type
+- **Keyboard display**: *Guide* (the on-screen full-size keyboard highlights the next
+  key to press, plus Shift when the character needs it), *Feedback* (no hint;
+  just-pressed keys flash briefly), *Hidden* (no keyboard). The numpad can be hidden in
+  Settings.
+- **Content**: *Random keys* (a timed drill over the whole physical keyboard, including
+  arrows, function keys, and the nav cluster), *Single word* (a timed Monkeytype-style
+  drill over a flowing stream of words from the bundled list), *Paste text* (type
   exactly what you paste), *Book* (AI-generated fiction, see below).
 
-Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency are shown
-while you type; a results screen afterward adds a WPM-over-time graph, your slowest and
-most error-prone keys, net WPM, and personal bests. Random mode quietly weights future
-rounds toward the keys you miss. Error handling is configurable: type-through, stop on
-letter, or stop on word (fix the word before you can leave it).
+Word and Random drills run for a configurable duration (30s to 5m presets in Settings,
+default 2 minutes) and show results when time is up. Any session can be paused; paused
+time never counts toward the metrics, and the target text is veiled so it cannot be read
+ahead. Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency
+are shown while you type; the results screen adds a WPM-over-time graph, your slowest
+and most error-prone keys, net WPM, and personal bests, and Enter starts the next drill.
+Random mode quietly weights future rounds toward the keys you miss. Error handling is
+configurable: type-through, stop on letter, or stop on word (fix the word before you can
+leave it).
+
+Typing targets are normalized to plain keystrokes: accented letters fold to ASCII
+(E for É), smart dashes/quotes/ellipses become their plain equivalents, exotic Unicode
+spaces become regular spaces, and anything unmappable is dropped. This applies to pasted
+text and book chapters; the book files on disk and the exports keep the original
+Unicode. The default theme is the light "foolscap" one; a saved theme choice wins.
 
 Settings, stats, and books persist in the XDG directories
 (`~/.config/bookleykeytrainer`, `~/.local/share/bookleykeytrainer`; exact paths vary by
@@ -50,12 +63,15 @@ app asks you to confirm, and the author invents everything, including the title.
   chapter you must finish typing every chapter so far.
 - After each chapter a single-line prompt asks how the story should continue. The author
   may ask one round of clarifying questions at most; answer in the app and it writes.
+- Ticking "Make this chapter the last chapter of the book" tells the author to land the
+  ending in that chapter; the book is then marked finished (rewrites stay possible).
 - Any chapter can be rewritten (with an instruction), including the latest untyped one;
   the rewrite must still fit the rest of the book, and rewriting resets that chapter's
   typing progress.
 - Books live on disk as human-readable Markdown plus a continuity bible; export the
-  whole book as Markdown or a typeset PDF at any time (files land in the app's data dir
-  under `exports/`, and the app shows the exact path).
+  whole book as Markdown or a typeset PDF at any time. Exports open in your system's
+  default viewer and land in the app's data dir under `exports/` (the app shows the
+  exact path).
 - Generation defaults to the Opus model; Settings has a model picker (opus, sonnet,
   haiku, fable).
 
