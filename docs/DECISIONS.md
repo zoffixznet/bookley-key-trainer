@@ -70,6 +70,9 @@ each; newest at the bottom of each section.
 - One real `make live-book-smoke` run was performed on 2026-07-10 (Opus) to verify the
   live path end to end; it passed and consumed a small amount of subscription usage. All
   other tests use the fake CLI.
+- A second live run followed the third review batch (same day, Opus): full-size chapter
+  plus a real cover design; the SVG parsed, validated, and rasterized on the first
+  attempt with no fallback. Everything else runs against the fake CLI.
 
 ## Fonts / assets
 
