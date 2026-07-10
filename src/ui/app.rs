@@ -116,6 +116,9 @@ pub struct App {
     // Active typing session (None between sessions).
     pub session: Option<Session>,
     pub session_started: Option<Instant>,
+    /// Press-Space-to-start gate: the session exists but the clock has not started.
+    /// The gate press itself is consumed, never fed to the session.
+    pub awaiting_start: bool,
     /// Pause bookkeeping: paused time never counts toward metrics.
     pub pause: PauseClock,
     pub last_result: Option<SessionResult>,
@@ -177,6 +180,7 @@ impl App {
             dev_mode,
             session: None,
             session_started: None,
+            awaiting_start: false,
             pause: PauseClock::default(),
             last_result: None,
             last_was_pb: false,
@@ -298,7 +302,7 @@ impl App {
 
     /// Pause or resume the active drill. Paused time never counts toward metrics.
     pub fn toggle_pause(&mut self) {
-        if self.session.is_none() {
+        if self.session.is_none() || self.awaiting_start {
             return;
         }
         let raw = self.raw_secs();
@@ -307,6 +311,30 @@ impl App {
         } else {
             self.pause.pause(raw);
         }
+    }
+
+    /// Dismiss the press-Space-to-start gate: the clock starts now.
+    pub fn begin_after_gate(&mut self) {
+        if self.session.is_none() || !self.awaiting_start {
+            return;
+        }
+        self.awaiting_start = false;
+        self.session_started = Some(Instant::now());
+        self.pause = PauseClock::default();
+    }
+
+    /// Zero the timer and every metric WITHOUT losing the typing position (Paste and
+    /// Book modes: a mid-chapter distraction ruins the stats, not the progress). The
+    /// press-Space gate re-arms so the fresh clock starts when the user is ready; any
+    /// active pause is cleared.
+    pub fn reset_session_stats(&mut self) {
+        let Some(s) = self.session.as_mut() else {
+            return;
+        };
+        s.reset_metrics();
+        self.pause = PauseClock::default();
+        self.session_started = None;
+        self.awaiting_start = true;
     }
 
     /// Build a text source for the current content mode and start a fresh session.
@@ -346,7 +374,10 @@ impl App {
         if let Some(mut s) = session {
             s.metrics.tick(0.0);
             self.session = Some(s);
-            self.session_started = Some(Instant::now());
+            // Every mode starts behind the press-Space gate: the clock starts on Space,
+            // and that press is never counted as typing input.
+            self.session_started = None;
+            self.awaiting_start = true;
             self.pause = PauseClock::default();
             self.screen = Screen::Typing;
         }
@@ -455,13 +486,28 @@ impl App {
 
     /// Handle keyboard input for the active typing session.
     fn handle_typing_input(&mut self, ctx: &egui::Context) {
-        if self.session.is_none() || self.screen != Screen::Typing || self.is_paused() {
+        if self.session.is_none() || self.screen != Screen::Typing {
+            return;
+        }
+        // Collect events first to avoid borrow conflicts.
+        let events: Vec<Event> = ctx.input(|i| i.events.clone());
+
+        // Paused: Space resumes (besides the Resume button); nothing else is fed.
+        if self.is_paused() {
+            if has_space_press(&events) {
+                self.toggle_pause();
+            }
+            return;
+        }
+        // The press-Space-to-start gate: Space starts the clock; the gate press itself
+        // is consumed here and never counted as typing input.
+        if self.awaiting_start {
+            if has_space_press(&events) {
+                self.begin_after_gate();
+            }
             return;
         }
         let now = self.session_secs();
-
-        // Collect events first to avoid borrow conflicts.
-        let events: Vec<Event> = ctx.input(|i| i.events.clone());
         // Random mode drills Backspace as an ordinary key; the other modes use it to
         // correct mistakes.
         let backspace_is_input = self.config.content_mode == ContentMode::Random;
@@ -802,6 +848,21 @@ impl eframe::App for App {
             Screen::Connect => connect::show(self, ui),
         });
     }
+}
+
+/// Whether any event in the batch is a fresh (non-repeat) Space press.
+fn has_space_press(events: &[Event]) -> bool {
+    events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Key {
+                key: Key::Space,
+                pressed: true,
+                repeat: false,
+                ..
+            }
+        )
+    })
 }
 
 /// Feed one frame's worth of keyboard events into the session. Pure with respect to the

@@ -120,22 +120,75 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         .color(p.brass),
                 );
                 ui.label(
-                    egui::RichText::new("The clock is stopped; paused time never counts.")
-                        .color(p.ghost)
-                        .size(13.0),
+                    egui::RichText::new(
+                        "The clock is stopped; paused time never counts. Press Space to resume.",
+                    )
+                    .color(p.ghost)
+                    .size(13.0),
                 );
                 ui.add_space(6.0);
                 let btn = egui::Button::new(
-                    egui::RichText::new("Resume")
+                    egui::RichText::new("Resume (Space)")
                         .size(16.0)
                         .strong()
                         .color(p.ink_850),
                 )
                 .fill(p.verdigris)
-                .min_size(egui::vec2(160.0, 40.0))
+                .min_size(egui::vec2(180.0, 40.0))
                 .corner_radius(CornerRadius::same(8));
                 if ui.add(btn).clicked() {
                     app.toggle_pause();
+                }
+            });
+        }
+
+        // Press-Space-to-start gate: shown until the first Space starts the clock.
+        if app.awaiting_start && !paused {
+            start_gate(app, ui);
+        }
+    });
+}
+
+/// The pre-drill gate: a clear "Press Space to start" plus, for the timed drills, a quick
+/// duration picker so drill length is not buried in Settings. Picking a duration applies
+/// to this (not yet started) drill and persists as the new default.
+fn start_gate(app: &mut App, ui: &mut egui::Ui) {
+    let p = app.palette();
+    ui.add_space(14.0);
+    ui.vertical_centered(|ui| {
+        ui.label(
+            egui::RichText::new("Press Space to start")
+                .font(theme::display_font(26.0))
+                .color(p.verdigris),
+        );
+        ui.label(
+            egui::RichText::new("The clock starts on Space; that press isn't counted as typing.")
+                .color(p.ghost)
+                .size(13.0),
+        );
+        let timed = matches!(
+            app.config.content_mode,
+            ContentMode::Random | ContentMode::Word
+        );
+        if timed {
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                // Center the segmented control on the column.
+                let seg_w = 5.0 * 46.0 + 90.0;
+                ui.add_space(((ui.available_width() - seg_w) / 2.0).max(0.0));
+                ui.label(egui::RichText::new("Duration:").color(p.ghost).size(12.5));
+                for (secs, label) in crate::core::config::DRILL_PRESETS {
+                    if ui
+                        .selectable_label(app.config.drill_secs == secs, label)
+                        .clicked()
+                    {
+                        app.config.drill_secs = secs;
+                        app.save_config();
+                        // The drill has not started yet: apply to it directly.
+                        if let Some(s) = app.session.as_mut() {
+                            s.time_limit_secs = Some(secs as f64);
+                        }
+                    }
                 }
             });
         }
@@ -180,10 +233,24 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
             stat(ui, &p, &right_str, "progress", p.ghost);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Pause / resume control.
-            let label = if app.is_paused() { "Resume" } else { "Pause" };
-            if ui.button(label).clicked() {
-                app.toggle_pause();
+            // Pause / resume control (meaningless before the clock starts).
+            if !app.awaiting_start {
+                let label = if app.is_paused() { "Resume" } else { "Pause" };
+                if ui.button(label).clicked() {
+                    app.toggle_pause();
+                }
+                // Reset stats: zero the clock and metrics, keep the typing position
+                // (useful when a distraction ruined a chapter's numbers mid-way).
+                if matches!(
+                    app.config.content_mode,
+                    ContentMode::Paste | ContentMode::Book
+                ) && ui
+                    .button("Reset stats")
+                    .on_hover_text("Zero the timer and metrics; your position in the text is kept.")
+                    .clicked()
+                {
+                    app.reset_session_stats();
+                }
             }
             // The quiet context label: what is being typed.
             let context = match app.config.content_mode {

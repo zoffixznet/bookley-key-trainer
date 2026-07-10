@@ -48,6 +48,15 @@ struct Args {
     /// With --screenshot: pause the drill before capturing (verifies the pause overlay).
     #[arg(long, hide = true)]
     paused: bool,
+
+    /// With --screenshot: keep the press-Space-to-start gate up instead of auto-starting.
+    #[arg(long, hide = true)]
+    gate: bool,
+
+    /// With --screenshot: pre-type a scripted mix of right and wrong keys so error
+    /// styling is visible in the capture.
+    #[arg(long, hide = true)]
+    demo_errors: bool,
 }
 
 fn main() {
@@ -85,31 +94,21 @@ fn main() {
         _ => {}
     }
     let dev = args.dev;
-    let screenshot = args.screenshot.clone();
-    let screen = args.screen.clone();
-    let paused = args.paused;
+    let shot = ShotOpts {
+        path: args.screenshot.clone(),
+        screen: args.screen.clone(),
+        paused: args.paused,
+        gate: args.gate,
+        demo_errors: args.demo_errors,
+    };
 
     // Try the default wgpu renderer first; fall back to glow (OpenGL) if the GPU stack
     // cannot initialize, and exit with a clear message if both fail.
-    match run_gui(
-        config.clone(),
-        dev,
-        screenshot.clone(),
-        screen.clone(),
-        paused,
-        eframe::Renderer::Wgpu,
-    ) {
+    match run_gui(config.clone(), dev, shot.clone(), eframe::Renderer::Wgpu) {
         Ok(()) => {}
         Err(e) => {
             tracing::warn!("wgpu renderer failed ({e}); retrying with glow (OpenGL)");
-            if let Err(e2) = run_gui(
-                config,
-                dev,
-                screenshot,
-                screen,
-                paused,
-                eframe::Renderer::Glow,
-            ) {
+            if let Err(e2) = run_gui(config, dev, shot, eframe::Renderer::Glow) {
                 eprintln!(
                     "Could not initialize a GPU context (wgpu: {e}; glow: {e2}).\n\
 Bookley needs OpenGL or Vulkan. On X11/Wayland, check your graphics drivers."
@@ -149,12 +148,20 @@ fn demo_result() -> bookley::core::metrics::SessionResult {
     bookley::core::metrics::SessionResult::from_metrics(&m, "word")
 }
 
+/// Screenshot-mode options bundled for the two renderer attempts.
+#[derive(Clone, Default)]
+struct ShotOpts {
+    path: Option<std::path::PathBuf>,
+    screen: Option<String>,
+    paused: bool,
+    gate: bool,
+    demo_errors: bool,
+}
+
 fn run_gui(
     config: Config,
     dev: bool,
-    screenshot: Option<std::path::PathBuf>,
-    screen: Option<String>,
-    paused: bool,
+    shot: ShotOpts,
     renderer: eframe::Renderer,
 ) -> Result<(), eframe::Error> {
     let icon =
@@ -181,10 +188,10 @@ fn run_gui(
         Box::new(move |cc| {
             let runner = Arc::new(ClaudeRunner::new());
             let mut app = App::new(&cc.egui_ctx, config, dev, runner);
-            app.screenshot_path = screenshot.clone();
+            app.screenshot_path = shot.path.clone();
             // Screenshot-mode conveniences: jump to a screen, open a book, or pause.
             if app.config.content_mode == bookley::core::config::ContentMode::Book
-                && screenshot.is_some()
+                && shot.path.is_some()
             {
                 if let Some(b) = app
                     .store
@@ -196,23 +203,57 @@ fn run_gui(
                     app.start_session();
                 }
             }
-            match screen.as_deref() {
+            match shot.screen.as_deref() {
                 Some("books") => app.screen = bookley::ui::app::Screen::Books,
                 Some("settings") => app.screen = bookley::ui::app::Screen::Settings,
                 Some("connect") => app.screen = bookley::ui::app::Screen::Connect,
                 Some("results") => {
                     app.screen = bookley::ui::app::Screen::Results;
-                    if app.last_result.is_none() && screenshot.is_some() {
+                    if app.last_result.is_none() && shot.path.is_some() {
                         app.last_result = Some(demo_result());
                         app.last_was_pb = true;
                     }
                 }
                 _ => {}
             }
-            if paused {
+            // Screenshots capture a running session unless the gate itself is wanted.
+            if shot.path.is_some() && !shot.gate {
+                app.begin_after_gate();
+            }
+            if shot.demo_errors {
+                if let Some(s) = app.session.as_mut() {
+                    demo_type_with_errors(s);
+                }
+            }
+            if shot.paused {
                 app.toggle_pause();
             }
             Ok(Box::new(app))
         }),
     )
+}
+
+/// Screenshot verification: feed a scripted mix of correct and wrong keystrokes through
+/// the real session pipeline so typed/error/pending styling is all visible at once.
+fn demo_type_with_errors(s: &mut bookley::core::session::Session) {
+    let mut t = 0.0;
+    for i in 0..60usize {
+        t += 0.18;
+        let Some(expected) = s.expected().cloned() else {
+            break;
+        };
+        // Every 4th keystroke is wrong.
+        if i % 4 == 3 {
+            match expected {
+                bookley::core::text_source::Expected::Char(_) => {
+                    s.input_char('\u{0}', t);
+                }
+                bookley::core::text_source::Expected::PhysicalKey(_) => {
+                    s.input_physical_key(egui::Key::F20, t);
+                }
+            }
+        } else {
+            s.dev_autotype_next(t);
+        }
+    }
 }
