@@ -103,8 +103,11 @@ not translate from English. Hold the same craft bar in every language.
 
 ## Length
 
-Target roughly 400 to 900 words per chapter: one scene to a few beats, a satisfying but
-bounded unit. This is a soft target; flex slightly for a scene's needs, but keep it tight.
+This is a full-size novel, not a serial of vignettes. Write each chapter as substantial
+as a chapter in a printed novel: as long as the scene work demands, and no longer. Let
+scenes breathe and land their beats; do not pad, and do not compress or stop early to
+keep the chapter convenient. There is no fixed word target, but a three-page chapter is
+not a novel chapter.
 
 ## Voice card
 

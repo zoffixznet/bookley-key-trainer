@@ -89,8 +89,9 @@ each; newest at the bottom of each section.
   `BOOK-TITLE: ...` at the top of the bible; the app adopts it as the book title.
 - Exports are written to `<data>/exports/<slug>.{md,pdf}` and the app shows the exact
   path; no native save dialog (keeps dependencies down, and the location is stable).
-- Resuming a partially typed chapter restarts that chapter (per-chapter done state is
-  what gates generation); chapters are 400-900 words, so the cost is minutes.
+- Resuming a partially typed chapter restarts that chapter (superseded in the third
+  review batch: typing progress now persists per chapter and resumes with a
+  one-paragraph rewind; see below).
 - No audio subsystem shipped, so there is no sound toggle in Settings (a dead toggle is
   worse than none); the config field remains and persists for forward compatibility.
 - Space is matched via egui Text events only (it produces one); Enter/Tab via key events
@@ -134,6 +135,46 @@ each; newest at the bottom of each section.
 - Results: Enter triggers the primary action, guarded for 400ms after completion so the
   finishing keystroke cannot immediately restart; book completions show "Continue the
   book" instead of "Type again".
+
+## Third review batch (2026-07-10)
+
+- Chapter length: the 400-900-word target is gone from the system prompt, the bundled
+  SKILL.md, and the spec (INITIAL_DESIGN updated to match). Chapters are now written as
+  full printed-novel chapters, as long as the scene work demands, with an explicit "a
+  three-page chapter is not a novel chapter" floor and no padding. The old reason for
+  short chapters (bounded typing sessions) is handled by progress persistence instead.
+- Book typing progress persists per chapter (position in the normalized target), saved
+  on every completed paragraph, every ~3s, on mode switches/session restarts, and on
+  exit. Resume rewinds to the greatest paragraph boundary strictly BEFORE the saved
+  position (so stopping exactly on a boundary rewinds one full paragraph); the rewound
+  paragraph is retyped as a refresher. Saves are monotonic: refresher retyping never
+  regresses the saved position.
+- Per-key stats: every keystroke books against the key that was EXPECTED at that moment
+  (both char and physical paths), key auto-repeat is ignored (repeat Key events are
+  dropped along with the Text event each produces; egui emits Key before its Text), the
+  first keystroke contributes no latency sample, and keys without samples show a dash,
+  never 0ms. Latency = inter-keystroke interval ending in a correct press, on the
+  pause-adjusted clock.
+- Backspace is a drillable target in Random mode only (it stays a correction key in the
+  char modes, where the text could not be typed without it).
+- Every mode starts behind a "Press Space to start" gate; the gate press is consumed.
+  Space also resumes from pause. "Reset stats" (Paste/Book) zeroes metrics and re-arms
+  the gate while keeping the typing position. Screenshot mode auto-starts unless the
+  hidden --gate flag asks for the gate itself.
+- Exports are book content only: title page + chapters (+ the cover as PDF page one).
+  Premise/language/continuation stay in book.toml for the AI. The Markdown export stays
+  text-only (a .md cannot self-contain a raster cover); the PDF carries the cover.
+- Covers: claude designs a hard-constrained self-contained SVG (fixed 1600x2560 viewBox,
+  basic shapes/paths/text/gradients, generic font families, no external refs/filters/
+  scripts/fonts), validated defensively and rasterized by the existing resvg pipeline
+  with the app's embedded fonts mapped to the generic families. One retry with the error
+  fed back, then a local typographic fallback, so the button always yields a cover.
+  Cover runs use a fresh claude session (not resumed into the novel's session) so design
+  chatter never pollutes story continuity. Blank renders count as failures.
+- Colorblind rule baked into the theme: state is never hue-only. Errors pair a brighter
+  error ink with a background tint and underline (verified in grayscale); the results
+  chart pairs color with dash pattern/weight plus a legend; weak-key pills are neutral
+  chips carried by text.
 
 ## Content / metrics
 

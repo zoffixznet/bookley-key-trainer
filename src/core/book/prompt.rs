@@ -282,8 +282,10 @@ fn length_and_language(meta: &BookMeta) -> String {
         meta.language.trim().to_string()
     };
     format!(
-        "Length: target roughly 400-900 words (one scene to a few beats), a satisfying but \
-bounded typing session. Write the entire chapter directly in {lang}, thinking in that \
+        "Length: this is a full-size novel; make the chapter as substantial as a chapter \
+in a printed novel, as long as the scene work demands and no longer. Do not pad, and do \
+not compress or stop early; there is no fixed word target, but a three-page chapter is \
+not a novel chapter. Write the entire chapter directly in {lang}, thinking in that \
 language and using its native idiom, dialogue conventions, punctuation, and register; do \
 not translate from English. "
     )

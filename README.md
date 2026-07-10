@@ -59,8 +59,11 @@ Create a book with a title, a description of what the story should involve, and 
 language (free text). All three may be left blank; if you leave the direction blank the
 app asks you to confirm, and the author invents everything, including the title.
 
-- One chapter is generated at a time (roughly 400-900 words). To unlock the next
-  chapter you must finish typing every chapter so far.
+- One chapter is generated at a time, sized like a chapter in a printed novel (as long
+  as the scene work demands; no fixed word target). To unlock the next chapter you must
+  finish typing every chapter so far. You do not have to type a chapter in one sitting:
+  progress is saved continuously, and returning to a chapter resumes one paragraph
+  before where you left off as a refresher.
 - After each chapter a single-line prompt asks how the story should continue. The author
   may ask one round of clarifying questions at most; answer in the app and it writes.
 - Ticking "Make this chapter the last chapter of the book" tells the author to land the
