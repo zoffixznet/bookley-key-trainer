@@ -87,8 +87,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
 
             section(ui, &p, "Appearance", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Theme:");
+                theme::control_row(ui, "Theme:", |ui| {
                     for t in [Theme::Light, Theme::Dark] {
                         if ui
                             .selectable_label(app.config.theme == t, t.label())
@@ -100,8 +99,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Caret:");
+                theme::control_row(ui, "Caret:", |ui| {
                     for c in [CaretStyle::Block, CaretStyle::Bar, CaretStyle::Underline] {
                         if ui
                             .selectable_label(app.config.caret == c, c.label())
@@ -124,8 +122,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
 
             section(ui, &p, "Drills", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Drill duration:");
+                theme::control_row(ui, "Default drill duration:", |ui| {
                     for (secs, label) in crate::core::config::DRILL_PRESETS {
                         if ui
                             .selectable_label(app.config.drill_secs == secs, label)
@@ -139,7 +136,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(
                     egui::RichText::new(
                         "Word and Random drills run for this long; results appear when \
-time is up.",
+time is up. The drill screen's start gate has the same picker.",
                     )
                     .color(p.ghost)
                     .size(12.0),
@@ -156,8 +153,7 @@ time is up.",
             });
 
             section(ui, &p, "Book generation", |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Default language:");
+                theme::control_row(ui, "Default language:", |ui| {
                     if ui
                         .text_edit_singleline(&mut app.config.default_language)
                         .changed()
@@ -165,8 +161,7 @@ time is up.",
                         changed = true;
                     }
                 });
-                ui.horizontal(|ui| {
-                    ui.label("Model:");
+                theme::control_row(ui, "Model:", |ui| {
                     for m in ["opus", "sonnet", "haiku", "fable"] {
                         let label = if m == "opus" { "opus (default)" } else { m };
                         if ui

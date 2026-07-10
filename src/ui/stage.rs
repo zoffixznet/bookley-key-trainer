@@ -223,6 +223,15 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
     };
 
     ui.horizontal(|ui| {
+        // Establish the row height before the first stat so every metric is centered
+        // against the same row (otherwise the first one sits a few pixels high).
+        let row_h = ui.fonts_mut(|f| {
+            f.layout_no_wrap("0".into(), theme::mono_font(21.0), Color32::WHITE)
+                .size()
+                .y
+        });
+        ui.allocate_exact_size(Vec2::new(0.0, row_h), Sense::hover());
+        ui.add_space(-ui.spacing().item_spacing.x);
         stat(ui, &p, &format!("{wpm:.0}"), "wpm", p.verdigris);
         stat(ui, &p, &format!("{raw:.0}"), "raw", p.ghost);
         stat(ui, &p, &format!("{acc:.0}%"), "accuracy", p.paper);
@@ -267,16 +276,34 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// One HUD metric, painted onto an allocated rect so every value and unit label in the
+/// row shares a single text baseline (nested layouts drift by a few pixels).
 fn stat(ui: &mut egui::Ui, p: &Palette, value: &str, label: &str, color: Color32) {
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(value)
-                .color(color)
-                .font(theme::mono_font(21.0))
-                .strong(),
-        );
-        ui.label(egui::RichText::new(label).color(p.ghost).size(11.5));
+    let value_font = theme::mono_font(21.0);
+    let label_font = theme::ui_font(11.5);
+    let (vw, vh, lw) = ui.fonts_mut(|f| {
+        let vg = f.layout_no_wrap(value.to_string(), value_font.clone(), color);
+        let lg = f.layout_no_wrap(label.to_string(), label_font.clone(), p.ghost);
+        (vg.size().x, vg.size().y, lg.size().x)
     });
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(vw + 5.0 + lw, vh), Sense::hover());
+    let painter = ui.painter();
+    // Both texts anchor to the same bottom line: one shared baseline.
+    let bottom = rect.bottom() - 2.0;
+    painter.text(
+        egui::pos2(rect.left(), bottom),
+        Align2::LEFT_BOTTOM,
+        value,
+        value_font,
+        color,
+    );
+    painter.text(
+        egui::pos2(rect.left() + vw + 5.0, bottom),
+        Align2::LEFT_BOTTOM,
+        label,
+        label_font,
+        p.ghost,
+    );
     ui.add_space(10.0);
 }
 
@@ -376,11 +403,21 @@ fn manuscript_panel(
                 Expected::PhysicalKey(_) => ' ',
             };
             let is_current = i == session.cursor && !session.is_complete();
+            // Errors are colorblind-safe: a bright high-contrast ink (distinct from the
+            // correct-text color even in grayscale) PLUS two non-color cues, a cell
+            // background tint and an underline.
             let (mut color, underline) = match status {
                 CharStatus::Pending => (p.ghost, false),
                 CharStatus::Correct => (p.paper, false),
-                CharStatus::Wrong => (p.ribbon, true),
+                CharStatus::Wrong => (p.error_ink, true),
             };
+            if status == CharStatus::Wrong && !is_current {
+                let cell = Rect::from_min_size(
+                    egui::pos2(x - 1.0, y - font_size * 0.62),
+                    Vec2::new(char_w + 2.0, font_size * 1.24),
+                );
+                painter.rect_filled(cell, CornerRadius::same(3), p.error_bg);
+            }
 
             // The current glyph is the most prominent thing on screen: a solid accent
             // block with a background-colored glyph (block caret), or a strong under-bar
@@ -438,7 +475,7 @@ fn manuscript_panel(
                         egui::pos2(x, y + font_size * 0.58),
                         egui::pos2(x + char_w, y + font_size * 0.58),
                     ],
-                    Stroke::new(2.0, p.ribbon),
+                    Stroke::new(2.5, p.error_ink),
                 );
             }
             x += char_w;
@@ -516,11 +553,9 @@ fn chips_panel(ui: &mut egui::Ui, p: &Palette, session: &Session, paused: bool) 
                         p.paper,
                         Stroke::new(1.0, p.edge),
                     ),
-                    CharStatus::Wrong => (
-                        p.ribbon.linear_multiply(0.15),
-                        p.ribbon,
-                        Stroke::new(1.2, p.ribbon),
-                    ),
+                    // Colorblind-safe error chip: bright ink on a tinted fill, plus an
+                    // underline below the label (state is never hue-only).
+                    CharStatus::Wrong => (p.error_bg, p.error_ink, Stroke::new(1.4, p.error_ink)),
                 }
             };
             painter.rect_filled(r, CornerRadius::same(7), fill);
@@ -532,6 +567,15 @@ fn chips_panel(ui: &mut egui::Ui, p: &Palette, session: &Session, paused: bool) 
                 font.clone(),
                 text_c,
             );
+            if status == CharStatus::Wrong && !is_current {
+                painter.line_segment(
+                    [
+                        egui::pos2(r.left() + 7.0, r.bottom() - 5.0),
+                        egui::pos2(r.right() - 7.0, r.bottom() - 5.0),
+                    ],
+                    Stroke::new(2.0, p.error_ink),
+                );
+            }
             x += w + gap;
         }
         y += chip_h + row_gap;

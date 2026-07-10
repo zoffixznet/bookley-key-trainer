@@ -164,12 +164,10 @@ fn create_dialog(app: &mut App, ui: &mut egui::Ui) {
                 .color(p.ghost)
                 .size(12.0),
         );
-        ui.horizontal(|ui| {
-            ui.label("Title:");
+        theme::control_row(ui, "Title:", |ui| {
             ui.text_edit_singleline(&mut app.book_ui.new_title);
         });
-        ui.horizontal(|ui| {
-            ui.label("Language:");
+        theme::control_row(ui, "Language:", |ui| {
             ui.text_edit_singleline(&mut app.book_ui.new_language);
         });
         ui.label("What should the story involve?");

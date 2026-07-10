@@ -26,6 +26,12 @@ pub struct Palette {
     pub brass: Color32,
     /// Errors and destructive actions only.
     pub ribbon: Color32,
+    /// Mistyped-glyph ink: brighter and higher-contrast than `ribbon`, tuned so the
+    /// error/correct difference survives grayscale (colorblind-safe together with the
+    /// underline + background tint, which carry the state without hue).
+    pub error_ink: Color32,
+    /// Subtle background tint behind mistyped glyphs (luminance cue, not just hue).
+    pub error_bg: Color32,
     /// Hairlines / borders on cards.
     pub edge: Color32,
     /// Keycap face, top highlight, bottom lip, edge stroke, and label.
@@ -49,6 +55,10 @@ impl Palette {
             verdigris: Color32::from_rgb(0x1F, 0x6F, 0x62),
             brass: Color32::from_rgb(0x8F, 0x6D, 0x1F),
             ribbon: Color32::from_rgb(0xB0, 0x35, 0x2C),
+            // Noticeably lighter than the near-black ink text in grayscale, on a light
+            // red wash that darkens the cell against the paper card.
+            error_ink: Color32::from_rgb(0xE0, 0x38, 0x1F),
+            error_bg: Color32::from_rgb(0xF6, 0xD2, 0xC9),
             edge: Color32::from_rgb(0xDC, 0xD3, 0xC0),
             key_face: Color32::from_rgb(0xFB, 0xF8, 0xF0),
             key_top: Color32::from_rgb(0xFF, 0xFD, 0xF7),
@@ -69,6 +79,10 @@ impl Palette {
             verdigris: Color32::from_rgb(0x49, 0xA8, 0x97),
             brass: Color32::from_rgb(0xCF, 0xA9, 0x54),
             ribbon: Color32::from_rgb(0xD2, 0x4A, 0x41),
+            // Noticeably darker than the warm paper text in grayscale, on a dark red
+            // wash that lifts the cell off the ink ground.
+            error_ink: Color32::from_rgb(0xFF, 0x72, 0x5C),
+            error_bg: Color32::from_rgb(0x52, 0x22, 0x1B),
             edge: Color32::from_rgb(0x33, 0x2C, 0x23),
             key_face: Color32::from_rgb(0x2A, 0x24, 0x1D),
             key_top: Color32::from_rgb(0x32, 0x2B, 0x23),
@@ -240,6 +254,22 @@ pub fn centered_column<R>(
         });
     });
     result.unwrap()
+}
+
+/// A "Label: [controls]" row with the label vertically centered against the controls.
+/// Plain `ui.horizontal` centers the first-added short label against a provisional row
+/// height, so labels sit a few pixels above taller widgets (buttons/selectables); a
+/// zero-width spacer establishes the real control height first.
+pub fn control_row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        let h =
+            ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+        ui.allocate_exact_size(egui::vec2(0.0, h), egui::Sense::hover());
+        ui.add_space(-ui.spacing().item_spacing.x);
+        ui.label(label);
+        add(ui)
+    })
+    .inner
 }
 
 /// A paper card frame sitting on the ground.
