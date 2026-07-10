@@ -27,6 +27,25 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
         });
 
+        // Claude connection banner: books and typing always work; generation needs Claude.
+        match &app.auth.check {
+            Some(check) if !check.is_connected() => {
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "Claude isn't connected yet; generating chapters needs it.",
+                        )
+                        .color(p.ghost),
+                    );
+                    if ui.button("Connect Claude").clicked() {
+                        app.screen = Screen::Connect;
+                    }
+                });
+            }
+            _ => {}
+        }
+
         if let Some(status) = &app.book_ui.status {
             ui.add_space(6.0);
             ui.label(egui::RichText::new(status).color(p.verdigris));
@@ -82,6 +101,29 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         if ui.button("Open").clicked() {
                             app.book_ui.open_slug = Some(book.meta.slug.clone());
                             app.book_ui.status = None;
+                        }
+                        if app.book_ui.confirm_delete.as_deref() == Some(&book.meta.slug) {
+                            if ui
+                                .button(egui::RichText::new("Really delete").color(p.ribbon))
+                                .clicked()
+                            {
+                                if let Err(e) = app.store.delete(&book.meta.slug) {
+                                    app.book_ui.status =
+                                        Some(format!("Could not delete the book: {e}"));
+                                }
+                                if app.book_ui.open_slug.as_deref() == Some(&book.meta.slug) {
+                                    app.book_ui.open_slug = None;
+                                }
+                                app.book_ui.confirm_delete = None;
+                            }
+                            if ui.button("Keep").clicked() {
+                                app.book_ui.confirm_delete = None;
+                            }
+                        } else if ui
+                            .button(egui::RichText::new("Delete").color(p.ghost))
+                            .clicked()
+                        {
+                            app.book_ui.confirm_delete = Some(book.meta.slug.clone());
                         }
                     });
                 });
@@ -306,9 +348,8 @@ this chapter?",
                     // Blank input: confirm they want fully AI-invented content.
                     app.book_ui.confirm_blank = true;
                 } else {
-                    // Allow one clarifying turn on the first chapter with real input.
-                    let allow_clarify = next_n == 1;
-                    let prompt = prompt::chapter_prompt(&book, next_n, &cont, allow_clarify, None);
+                    // The author gets at most one clarifying turn per generation.
+                    let prompt = prompt::chapter_prompt(&book, next_n, &cont, true, None);
                     app.start_generation(next_n, false, prompt);
                 }
             }
@@ -326,6 +367,7 @@ this chapter?",
 fn writing_view(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
     ui.add_space(30.0);
+    let mut cancel_clicked = false;
     ui.vertical_centered(|ui| {
         ui.label(egui::RichText::new("Writing...").color(p.brass).size(22.0));
         ui.add_space(4.0);
@@ -337,7 +379,14 @@ fn writing_view(app: &mut App, ui: &mut egui::Ui) {
                     .size(12.0),
             );
         }
+        ui.add_space(4.0);
+        if ui.button("Cancel").clicked() {
+            cancel_clicked = true;
+        }
     });
+    if cancel_clicked {
+        app.cancel_generation();
+    }
     ui.add_space(12.0);
     egui::ScrollArea::vertical()
         .max_height(360.0)

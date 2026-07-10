@@ -2,6 +2,7 @@
 //! used as the canonical key identity). Everything here is unit-testable.
 
 pub mod book;
+pub mod claude_auth;
 pub mod config;
 pub mod keys;
 pub mod metrics;

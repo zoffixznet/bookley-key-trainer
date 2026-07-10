@@ -8,9 +8,11 @@
 //! global hooks), and the full system prompt via `--append-system-prompt`.
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -38,6 +40,8 @@ pub enum GenError {
     MaxTurns,
     /// Hit the output token cap.
     MaxOutputTokens,
+    /// The user cancelled the run (or it hit the app-side timeout).
+    Cancelled,
     /// Anything else.
     Other(String),
 }
@@ -47,12 +51,13 @@ impl GenError {
     pub fn user_message(&self) -> String {
         match self {
             GenError::NotFound => {
-                "Claude CLI not found. Install it and make sure `claude` is on your PATH \
-(or set BOOKLEY_CLAUDE_BIN)."
+                "Claude Code isn't installed on this computer. The other practice modes \
+still work. See the README for the one-time install, then come back here."
                     .into()
             }
             GenError::LoggedOut => {
-                "Claude isn't signed in. Run `claude auth login` in a terminal, then retry."
+                "Claude isn't connected. Use Connect Claude to sign in, then retry; your \
+chapters are saved."
                     .into()
             }
             GenError::OrgNotAllowed => {
@@ -84,6 +89,7 @@ was lost.".into()
                 "The chapter hit the length cap and may be truncated. Retry, or accept the \
 partial chapter.".into()
             }
+            GenError::Cancelled => "Generation cancelled. Nothing was lost.".into(),
             GenError::Other(s) => format!("Book generation failed: {s}"),
         }
     }
@@ -316,12 +322,16 @@ pub struct GenRequest {
     pub fork_session: bool,
     /// Whether to request partial messages for a live view.
     pub stream: bool,
+    /// App-side timeout for the whole run; the child is killed past this.
+    pub timeout_secs: u64,
 }
 
 /// Abstraction over running the `claude` process so tests can inject a fake.
 pub trait CommandRunner: Send + Sync {
     /// Run the request, invoking `on_delta` for streamed text and returning the result.
-    fn run(&self, req: &GenRequest, on_delta: &mut dyn FnMut(&str)) -> GenResult;
+    /// `cancel` may be flipped from another thread to abort the run (kills the child).
+    fn run(&self, req: &GenRequest, cancel: &AtomicBool, on_delta: &mut dyn FnMut(&str))
+        -> GenResult;
     /// Check login status. Returns Ok(true) if logged in, Ok(false) if logged out.
     fn auth_status(&self) -> Result<bool, GenError>;
 }
@@ -349,12 +359,22 @@ impl ClaudeRunner {
         // Sanitize: never leak ANTHROPIC_API_KEY into the child (would flip to API billing).
         cmd.env_remove("ANTHROPIC_API_KEY");
         cmd.env_remove("ANTHROPIC_AUTH_TOKEN");
+        // If the in-app Connect Claude flow stored an OAuth token, pass it along. This is
+        // subscription auth (sk-ant-oat...), NOT an API key.
+        if let Some(tok) = crate::core::claude_auth::load_token() {
+            cmd.env("CLAUDE_CODE_OAUTH_TOKEN", tok);
+        }
         cmd
     }
 }
 
 impl CommandRunner for ClaudeRunner {
     fn auth_status(&self) -> Result<bool, GenError> {
+        // A token stored by the in-app Connect Claude flow counts as authenticated; it is
+        // passed to every child via CLAUDE_CODE_OAUTH_TOKEN.
+        if crate::core::claude_auth::load_token().is_some() {
+            return Ok(true);
+        }
         let out = self
             .base_command()
             .arg("auth")
@@ -378,7 +398,12 @@ impl CommandRunner for ClaudeRunner {
         Ok(text.to_lowercase().contains("logged in") && !text.to_lowercase().contains("not logged"))
     }
 
-    fn run(&self, req: &GenRequest, on_delta: &mut dyn FnMut(&str)) -> GenResult {
+    fn run(
+        &self,
+        req: &GenRequest,
+        cancel: &AtomicBool,
+        on_delta: &mut dyn FnMut(&str),
+    ) -> GenResult {
         let mut cmd = self.base_command();
         cmd.current_dir(&req.cwd);
         cmd.arg("-p");
@@ -411,26 +436,111 @@ impl CommandRunner for ClaudeRunner {
             Err(e) => return Err(GenError::Other(e.to_string())),
         };
 
+        // Write the prompt off-thread so a full pipe can never block us, then close stdin
+        // so a headless run can never turn interactive.
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(req.prompt.as_bytes());
-            // dropping stdin closes it
+            let prompt = req.prompt.clone();
+            std::thread::spawn(move || {
+                let _ = stdin.write_all(prompt.as_bytes());
+                // dropping stdin closes it
+            });
+        }
+
+        // Collect stderr off-thread for auth-shaped failure classification.
+        let stderr_buf = Arc::new(Mutex::new(String::new()));
+        if let Some(mut stderr) = child.stderr.take() {
+            let buf = stderr_buf.clone();
+            std::thread::spawn(move || {
+                let mut s = String::new();
+                let _ = stderr.read_to_string(&mut s);
+                if let Ok(mut b) = buf.lock() {
+                    *b = s;
+                }
+            });
         }
 
         let stdout = child.stdout.take();
+
+        // Watchdog: kill the child on cancel or timeout so the app never hangs on the CLI.
+        let child = Arc::new(Mutex::new(child));
+        let watchdog_child = child.clone();
+        let watchdog_stop = Arc::new(AtomicBool::new(false));
+        let watchdog_stop2 = watchdog_stop.clone();
+        let killed = Arc::new(AtomicBool::new(false));
+        let killed2 = killed.clone();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_watch = cancel_flag.clone();
+        // Mirror the caller's cancel flag into an owned Arc the watchdog can poll.
+        // (The caller's &AtomicBool lifetime does not outlive this fn, which is fine:
+        // the watchdog also stops when this fn signals completion.)
+        let timeout = std::time::Duration::from_secs(req.timeout_secs.max(1));
+        let started = std::time::Instant::now();
+        let watchdog = std::thread::spawn(move || loop {
+            if watchdog_stop2.load(Ordering::SeqCst) {
+                return;
+            }
+            if cancel_watch.load(Ordering::SeqCst) || started.elapsed() > timeout {
+                killed2.store(true, Ordering::SeqCst);
+                if let Ok(mut c) = watchdog_child.lock() {
+                    let _ = c.kill();
+                }
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        });
+
         let result = if let Some(stdout) = stdout {
             let reader = BufReader::new(stdout);
-            let lines = reader.lines().map_while(Result::ok);
+            let mut lines_iter = reader.lines();
+            // Pump lines manually so we can mirror the caller's cancel flag as we go.
+            let lines = std::iter::from_fn(|| {
+                if cancel.load(Ordering::SeqCst) {
+                    cancel_flag.store(true, Ordering::SeqCst);
+                }
+                lines_iter.next().and_then(|r| r.ok())
+            });
             parse_stream_lines(lines, |d| on_delta(d))
         } else {
             Err(GenError::Other("no stdout".into()))
         };
 
+        // One last mirror in case cancel arrived after EOF.
+        if cancel.load(Ordering::SeqCst) {
+            cancel_flag.store(true, Ordering::SeqCst);
+        }
+        watchdog_stop.store(true, Ordering::SeqCst);
+        let _ = watchdog.join();
+
         // Reap the child and consider its exit status for error subtypes.
-        let status = child.wait();
-        match (&result, status) {
-            (Ok(_), _) => result,
-            (Err(_), Ok(st)) if !st.success() => result, // already classified
-            (Err(_), _) => result,
+        let status = child.lock().ok().and_then(|mut c| c.wait().ok());
+
+        if killed.load(Ordering::SeqCst) {
+            return Err(GenError::Cancelled);
+        }
+
+        match result {
+            Ok(s) => Ok(s),
+            // Unclassified failure: check stderr / exit for an auth-shaped problem.
+            Err(GenError::Other(msg)) => {
+                let stderr = stderr_buf.lock().map(|b| b.clone()).unwrap_or_default();
+                let low = stderr.to_lowercase();
+                let nonzero = status.map(|st| !st.success()).unwrap_or(true);
+                if nonzero
+                    && (low.contains("not logged in")
+                        || low.contains("please log in")
+                        || low.contains("authentication")
+                        || low.contains("please run /login")
+                        || low.contains("invalid api key"))
+                {
+                    Err(GenError::LoggedOut)
+                } else if !stderr.trim().is_empty() {
+                    let head: String = stderr.trim().chars().take(200).collect();
+                    Err(GenError::Other(format!("{msg}: {head}")))
+                } else {
+                    Err(GenError::Other(msg))
+                }
+            }
+            Err(e) => Err(e),
         }
     }
 }
@@ -467,6 +577,7 @@ impl AgentClient {
     }
 
     /// Spawn a generation on a background thread; events arrive on the returned receiver.
+    /// The returned `AtomicBool` is a cancel handle: set it to abort the run.
     pub fn generate(
         &self,
         prompt: String,
@@ -475,8 +586,10 @@ impl AgentClient {
         cwd: PathBuf,
         resume_session: Option<String>,
         fork_session: bool,
-    ) -> std::sync::mpsc::Receiver<AgentEvent> {
+    ) -> (std::sync::mpsc::Receiver<AgentEvent>, Arc<AtomicBool>) {
         let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel2 = cancel.clone();
         let runner = self.runner.clone();
         let plugin_dir = self.plugin_dir.clone();
         std::thread::spawn(move || {
@@ -489,12 +602,13 @@ impl AgentClient {
                 resume_session,
                 fork_session,
                 stream: true,
+                timeout_secs: 600,
             };
             let tx_delta = tx.clone();
             let mut on_delta = move |d: &str| {
                 let _ = tx_delta.send(AgentEvent::Delta(d.to_string()));
             };
-            match runner.run(&req, &mut on_delta) {
+            match runner.run(&req, &cancel2, &mut on_delta) {
                 Ok(s) => {
                     let _ = tx.send(AgentEvent::Done(Box::new(GenDone {
                         text: s.text,
@@ -508,7 +622,7 @@ impl AgentClient {
                 }
             }
         });
-        rx
+        (rx, cancel)
     }
 }
 

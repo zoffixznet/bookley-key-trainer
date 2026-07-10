@@ -1,5 +1,6 @@
 //! The eframe application: state, the update loop, input handling, and view dispatch.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Instant;
@@ -8,6 +9,7 @@ use egui::{Event, Key};
 
 use crate::core::book::agent::{AgentClient, AgentEvent, CommandRunner, GenError};
 use crate::core::book::store::{Book, BookStore};
+use crate::core::claude_auth::{AuthCheck, ConnectEvent, ConnectFlow};
 use crate::core::config::{Config, ContentMode, KeyboardMode};
 use crate::core::keys;
 use crate::core::metrics::SessionResult;
@@ -18,7 +20,7 @@ use crate::core::text_source::{
     BookSource, PasteSource, RandomSource, Target, TextSource, WordSource,
 };
 use crate::ui::keyboard::FlashState;
-use crate::ui::{books, results, settings, stage, theme};
+use crate::ui::{books, connect, results, settings, stage, theme};
 
 /// Which top-level screen is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,15 +29,50 @@ pub enum Screen {
     Results,
     Books,
     Settings,
+    Connect,
 }
 
 /// State of a book-generation request in flight.
 pub struct BookGen {
     pub rx: Receiver<AgentEvent>,
+    pub cancel: Arc<AtomicBool>,
     pub live_text: String,
     pub n: usize,
     pub is_rewrite: bool,
     pub started: Instant,
+}
+
+/// UI state of the Connect Claude flow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectUiState {
+    Idle,
+    Starting,
+    UrlShown { url: String, waiting_for_code: bool },
+    Verifying,
+    Failed(String),
+}
+
+/// Authentication state owned by the app: background checks + a live connect flow.
+pub struct AuthUi {
+    /// Last background check result (None while a check is in flight / not yet run).
+    pub check: Option<AuthCheck>,
+    pub check_rx: Option<Receiver<AuthCheck>>,
+    /// A running PTY-driven connect flow, if any.
+    pub flow: Option<ConnectFlow>,
+    pub state: ConnectUiState,
+    pub code_input: String,
+}
+
+impl Default for AuthUi {
+    fn default() -> Self {
+        AuthUi {
+            check: None,
+            check_rx: None,
+            flow: None,
+            state: ConnectUiState::Idle,
+            code_input: String::new(),
+        }
+    }
 }
 
 /// Book-mode UI sub-state.
@@ -62,6 +99,8 @@ pub struct BookUi {
     pub status: Option<String>,
     /// Which chapter is being typed (1-based).
     pub typing_chapter: Option<usize>,
+    /// Slug pending delete confirmation.
+    pub confirm_delete: Option<String>,
 }
 
 pub struct App {
@@ -88,7 +127,11 @@ pub struct App {
     pub runner: Arc<dyn CommandRunner>,
     pub book_ui: BookUi,
     pub gen: Option<BookGen>,
-    pub auth_ok: Option<bool>,
+    pub auth: AuthUi,
+
+    /// When set, save a screenshot here after a few frames and exit (verification mode).
+    pub screenshot_path: Option<std::path::PathBuf>,
+    frame_count: u64,
 
     // Whether a real embedded/managed session is running or we are idle.
     start_time: Instant,
@@ -134,15 +177,90 @@ impl App {
             runner,
             book_ui: BookUi::default(),
             gen: None,
-            auth_ok: None,
+            auth: AuthUi::default(),
+            screenshot_path: None,
+            frame_count: 0,
             start_time: Instant::now(),
         };
+        // Kick off a background auth check so Book mode knows its state without blocking.
+        app.refresh_auth();
         // Start an initial session for the default content mode (except Book, which needs
         // a book selected first).
         if app.config.content_mode != ContentMode::Book {
             app.start_session();
         }
         app
+    }
+
+    /// Run a Claude auth check on a background thread; result lands in `self.auth.check`.
+    pub fn refresh_auth(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.auth.check_rx = Some(rx);
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::core::claude_auth::check_auth_blocking());
+        });
+    }
+
+    /// Begin the PTY-driven Connect Claude flow.
+    pub fn start_connect_flow(&mut self) {
+        match ConnectFlow::start() {
+            Ok(flow) => {
+                self.auth.flow = Some(flow);
+                self.auth.state = ConnectUiState::Starting;
+                self.auth.code_input.clear();
+            }
+            Err(e) => {
+                self.auth.state = ConnectUiState::Failed(format!(
+                    "Could not start the sign-in flow: {e}"
+                ));
+            }
+        }
+    }
+
+    /// Poll the background auth check and any live connect flow.
+    fn poll_auth(&mut self) {
+        if let Some(rx) = &self.auth.check_rx {
+            if let Ok(check) = rx.try_recv() {
+                tracing::info!("claude auth: {:?}", check);
+                self.auth.check = Some(check);
+                self.auth.check_rx = None;
+            }
+        }
+        let mut finish_flow = false;
+        if let Some(flow) = &self.auth.flow {
+            while let Ok(ev) = flow.events.try_recv() {
+                match ev {
+                    ConnectEvent::Url(url) => {
+                        self.auth.state = ConnectUiState::UrlShown {
+                            url,
+                            waiting_for_code: false,
+                        };
+                    }
+                    ConnectEvent::WaitingForCode => {
+                        if let ConnectUiState::UrlShown { url, .. } = &self.auth.state {
+                            self.auth.state = ConnectUiState::UrlShown {
+                                url: url.clone(),
+                                waiting_for_code: true,
+                            };
+                        }
+                    }
+                    ConnectEvent::TokenStored => {
+                        self.auth.check = Some(AuthCheck::ConnectedToken);
+                        self.auth.state = ConnectUiState::Idle;
+                        self.book_ui.status =
+                            Some("Claude is connected. Book mode is ready.".into());
+                        finish_flow = true;
+                    }
+                    ConnectEvent::Failed(msg) => {
+                        self.auth.state = ConnectUiState::Failed(msg);
+                        finish_flow = true;
+                    }
+                }
+            }
+        }
+        if finish_flow {
+            self.auth.flow = None;
+        }
     }
 
     /// Seconds since the current session started (0 if none).
@@ -478,6 +596,13 @@ impl App {
             Err(e) => {
                 tracing::warn!("book gen failed: {e:?}");
                 self.book_ui.status = Some(e.user_message());
+                // Auth-shaped failures reopen the Connect Claude flow; chapters are safe
+                // on disk, and retrying after connecting picks up where we left off.
+                if matches!(e, GenError::LoggedOut | GenError::OrgNotAllowed) {
+                    self.auth.check = Some(AuthCheck::NotConnected);
+                    self.auth.state = ConnectUiState::Idle;
+                    self.screen = Screen::Connect;
+                }
             }
         }
     }
@@ -517,24 +642,25 @@ impl App {
             self.book_ui.status = Some("Could not load the book.".into());
             return;
         };
-        // Auth check first: give actionable guidance instead of a silent failure.
-        match self.runner.auth_status() {
-            Ok(true) => {}
-            Ok(false) => {
-                self.book_ui.status = Some(GenError::LoggedOut.user_message());
-                return;
-            }
-            Err(GenError::NotFound) => {
+        // Gate on the cached auth state: clear guidance instead of a doomed run. An
+        // Unknown/None state proceeds; the run itself will classify any failure.
+        match &self.auth.check {
+            Some(AuthCheck::CliMissing) => {
                 self.book_ui.status = Some(GenError::NotFound.user_message());
                 return;
             }
-            Err(_) => { /* proceed; the run will surface a clearer error */ }
+            Some(AuthCheck::NotConnected) => {
+                self.book_ui.status = Some(GenError::LoggedOut.user_message());
+                self.screen = Screen::Connect;
+                return;
+            }
+            _ => {}
         }
         let system_prompt = crate::core::book::prompt::system_prompt();
         let model = self.config.book_model.clone();
         let cwd = book.dir.clone();
         let resume = book.meta.session_id.clone();
-        let rx = self.agent.generate(
+        let (rx, cancel) = self.agent.generate(
             prompt,
             system_prompt,
             model,
@@ -544,6 +670,7 @@ impl App {
         );
         self.gen = Some(BookGen {
             rx,
+            cancel,
             live_text: String::new(),
             n,
             is_rewrite,
@@ -552,8 +679,56 @@ impl App {
         self.book_ui.status = Some("Writing...".into());
     }
 
+    /// Cancel the in-flight generation, if any.
+    pub fn cancel_generation(&mut self) {
+        if let Some(gen) = &self.gen {
+            gen.cancel.store(true, Ordering::SeqCst);
+        }
+    }
+
     pub fn palette(&self) -> theme::Palette {
         theme::Palette::for_theme(self.config.theme)
+    }
+
+    /// Verification mode: render a few frames, request a screenshot, save it, exit.
+    fn handle_screenshot_mode(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.screenshot_path.clone() else {
+            return;
+        };
+        self.frame_count += 1;
+        ctx.request_repaint();
+        if self.frame_count == 5 {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+        }
+        if self.frame_count > 300 {
+            tracing::error!("screenshot never arrived; giving up");
+            std::process::exit(1);
+        }
+        let shot: Option<std::sync::Arc<egui::ColorImage>> = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            })
+        });
+        if let Some(img) = shot {
+            let [w, h] = img.size;
+            let mut out = image::RgbaImage::new(w as u32, h as u32);
+            for (i, px) in img.pixels.iter().enumerate() {
+                let x = (i % w) as u32;
+                let y = (i / w) as u32;
+                out.put_pixel(x, y, image::Rgba(px.to_array()));
+            }
+            match out.save(&path) {
+                Ok(()) => {
+                    tracing::info!("screenshot saved to {}", path.display());
+                    std::process::exit(0);
+                }
+                Err(e) => {
+                    tracing::error!("screenshot save failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
     }
 }
 
@@ -562,6 +737,8 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let _ = self.start_time; // keep field alive for potential uptime logging
 
+        self.handle_screenshot_mode(ctx);
+        self.poll_auth();
         self.poll_gen(ctx);
         self.handle_typing_input(ctx);
 
@@ -586,6 +763,7 @@ impl eframe::App for App {
             Screen::Results => results::show(self, ui),
             Screen::Books => books::show(self, ui),
             Screen::Settings => settings::show(self, ui),
+            Screen::Connect => connect::show(self, ui),
         });
     }
 }

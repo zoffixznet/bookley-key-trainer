@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod books;
+pub mod connect;
 pub mod keyboard;
 pub mod results;
 pub mod settings;
