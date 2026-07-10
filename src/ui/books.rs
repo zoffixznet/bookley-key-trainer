@@ -212,7 +212,18 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
         return;
     };
     let title = crate::core::book::store::display_title(&book.meta);
+    let cover_tex = cover_texture(app, ui, &book);
+    let cover_designing = app
+        .cover_gen
+        .as_ref()
+        .map(|c| c.slug == *slug)
+        .unwrap_or(false);
     ui.horizontal(|ui| {
+        // The cover (page one of the PDF), when one has been generated.
+        if let Some(tex) = &cover_tex {
+            ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(96.0, 154.0)));
+            ui.add_space(4.0);
+        }
         ui.label(
             egui::RichText::new(&title)
                 .color(p.brass)
@@ -228,6 +239,23 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
             }
             if ui.button("Export Markdown").clicked() {
                 export_markdown(app, &book);
+            }
+            // Cover design: same claude plumbing as chapters; always yields a cover
+            // (a local typographic fallback covers a failed design).
+            if cover_designing {
+                if ui.button("Cancel cover").clicked() {
+                    app.cancel_cover();
+                }
+                ui.spinner();
+            } else {
+                let label = if book.has_cover() {
+                    "Regenerate cover"
+                } else {
+                    "Generate cover"
+                };
+                if ui.button(label).clicked() {
+                    app.start_cover_generation();
+                }
             }
         });
     });
@@ -515,6 +543,36 @@ fn write_download(name: &str, bytes: &[u8]) -> std::io::Result<std::path::PathBu
     let path = dir.join(name);
     std::fs::write(&path, bytes)?;
     Ok(path)
+}
+
+/// Load (and cache) the cover PNG as an egui texture. The cache key includes the file
+/// mtime so a regenerated cover replaces the old texture; misses decode a downscaled
+/// thumbnail to keep GPU memory small.
+fn cover_texture(
+    app: &mut App,
+    ui: &egui::Ui,
+    book: &crate::core::book::store::Book,
+) -> Option<egui::TextureHandle> {
+    let path = book.cover_path();
+    let mtime = std::fs::metadata(&path).ok()?.modified().ok()?;
+    let key = format!("{}:{:?}", book.meta.slug, mtime);
+    if let Some((k, tex)) = &app.cover_tex {
+        if *k == key {
+            return Some(tex.clone());
+        }
+    }
+    let bytes = std::fs::read(&path).ok()?;
+    let img = image::load_from_memory(&bytes).ok()?.thumbnail(320, 512);
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    let ci = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], rgba.as_raw());
+    let tex = ui.ctx().load_texture(
+        format!("cover-{}", book.meta.slug),
+        ci,
+        egui::TextureOptions::LINEAR,
+    );
+    app.cover_tex = Some((key, tex.clone()));
+    Some(tex)
 }
 
 /// Ensure the Books tab keeps content mode aligned when opened directly.

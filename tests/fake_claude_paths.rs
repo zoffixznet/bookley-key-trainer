@@ -153,5 +153,47 @@ fn spawn_paths_against_fake_claude() {
     );
     assert!(sent.contains("not a cliffhanger"));
 
+    // --- cover generation through the real spawn path ---
+    // Canned SVG: validated, rasterized, no fallback.
+    std::env::set_var("FAKE_CLAUDE_MODE", "cover");
+    let cover_book = store.create("Cover Test", "English", "", false).unwrap();
+    let out = bookley::core::book::cover::generate_cover_blocking(
+        &runner,
+        &cover_book,
+        "sonnet",
+        data.clone(),
+        60,
+        &AtomicBool::new(false),
+    )
+    .expect("canned SVG cover");
+    assert!(out.png.starts_with(b"\x89PNG"));
+    assert!(!out.used_fallback, "canned SVG must render directly");
+    // Unusable reply (twice): the local typographic fallback still yields a cover.
+    std::env::set_var("FAKE_CLAUDE_MODE", "cover_invalid");
+    let out = bookley::core::book::cover::generate_cover_blocking(
+        &runner,
+        &cover_book,
+        "sonnet",
+        data.clone(),
+        60,
+        &AtomicBool::new(false),
+    )
+    .expect("fallback cover");
+    assert!(out.used_fallback, "invalid SVG must hit the fallback");
+    assert!(out.png.starts_with(b"\x89PNG"));
+    // A hard CLI failure surfaces like chapter generation does (no silent fallback).
+    std::env::set_var("FAKE_CLAUDE_MODE", "logged_out");
+    let e = bookley::core::book::cover::generate_cover_blocking(
+        &runner,
+        &cover_book,
+        "sonnet",
+        data.clone(),
+        60,
+        &AtomicBool::new(false),
+    )
+    .expect_err("auth failure must propagate");
+    assert_eq!(e, GenError::LoggedOut);
+    std::env::remove_var("FAKE_CLAUDE_MODE");
+
     let _ = std::fs::remove_dir_all(&data);
 }

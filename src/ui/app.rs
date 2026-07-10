@@ -42,6 +42,21 @@ pub struct BookGen {
     pub started: Instant,
 }
 
+/// State of a cover-design request in flight.
+pub struct CoverGen {
+    pub rx: Receiver<CoverEvent>,
+    pub cancel: Arc<AtomicBool>,
+    pub started: Instant,
+    /// The book the cover is for.
+    pub slug: String,
+}
+
+/// Outcome of a background cover run.
+pub enum CoverEvent {
+    Done { png: Vec<u8>, used_fallback: bool },
+    Failed(GenError),
+}
+
 /// UI state of the Connect Claude flow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConnectUiState {
@@ -139,6 +154,10 @@ pub struct App {
     pub book_ui: BookUi,
     pub gen: Option<BookGen>,
     pub auth: AuthUi,
+    /// A cover-design run in flight, if any.
+    pub cover_gen: Option<CoverGen>,
+    /// Cached cover texture keyed by slug + file mtime (reloaded when either changes).
+    pub cover_tex: Option<(String, egui::TextureHandle)>,
 
     /// When the active session types a book chapter: (slug, chapter n). Used to persist
     /// typing progress continuously and crash-safely, whatever mode the UI is in now.
@@ -205,6 +224,8 @@ impl App {
             book_ui: BookUi::default(),
             gen: None,
             auth: AuthUi::default(),
+            cover_gen: None,
+            cover_tex: None,
             session_book: None,
             book_resume_offset: 0,
             book_chapter_len: 0,
@@ -860,6 +881,120 @@ impl App {
         }
     }
 
+    /// Kick off a cover design for the open book on a background thread: same claude
+    /// plumbing, auth gating, and error handling as chapter generation.
+    pub fn start_cover_generation(&mut self) {
+        if self.cover_gen.is_some() {
+            return;
+        }
+        let Some(slug) = self.book_ui.open_slug.clone() else {
+            return;
+        };
+        let Ok(book) = self.store.load(&slug) else {
+            self.book_ui.status = Some("Could not load the book.".into());
+            return;
+        };
+        match &self.auth.check {
+            Some(AuthCheck::CliMissing) => {
+                self.book_ui.status = Some(GenError::NotFound.user_message());
+                return;
+            }
+            Some(AuthCheck::NotConnected) => {
+                self.book_ui.status = Some(GenError::LoggedOut.user_message());
+                self.screen = Screen::Connect;
+                return;
+            }
+            _ => {}
+        }
+        let runner = self.runner.clone();
+        let model = self.config.book_model.clone();
+        let plugin_dir = self.agent.plugin_dir.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel2 = cancel.clone();
+        std::thread::spawn(move || {
+            let res = crate::core::book::cover::generate_cover_blocking(
+                &*runner, &book, &model, plugin_dir, 300, &cancel2,
+            );
+            let _ = tx.send(match res {
+                Ok(o) => CoverEvent::Done {
+                    png: o.png,
+                    used_fallback: o.used_fallback,
+                },
+                Err(e) => CoverEvent::Failed(e),
+            });
+        });
+        self.cover_gen = Some(CoverGen {
+            rx,
+            cancel,
+            started: Instant::now(),
+            slug,
+        });
+        self.book_ui.status = Some("Designing a cover...".into());
+    }
+
+    /// Cancel the in-flight cover design, if any.
+    pub fn cancel_cover(&mut self) {
+        if let Some(cg) = &self.cover_gen {
+            cg.cancel.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Poll a running cover design; store the PNG with the book when it lands.
+    fn poll_cover(&mut self, ctx: &egui::Context) {
+        let Some(cg) = &self.cover_gen else {
+            return;
+        };
+        let ev = match cg.rx.try_recv() {
+            Ok(ev) => ev,
+            Err(_) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                return;
+            }
+        };
+        let slug = cg.slug.clone();
+        self.cover_gen = None;
+        match ev {
+            CoverEvent::Done { png, used_fallback } => match self.store.load(&slug) {
+                Ok(book) => match std::fs::write(book.cover_path(), &png) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "cover saved book={} bytes={} fallback={}",
+                            slug,
+                            png.len(),
+                            used_fallback
+                        );
+                        self.cover_tex = None; // force a texture reload
+                        self.book_ui.status = Some(if used_fallback {
+                            "Claude's design could not be rendered, so a clean typographic \
+cover was generated instead. Regenerate to try again."
+                                .into()
+                        } else {
+                            "Cover ready: it is page one of the PDF export. Regenerating \
+replaces it."
+                                .into()
+                        });
+                    }
+                    Err(e) => {
+                        self.book_ui.status = Some(format!("Could not save the cover: {e}"));
+                    }
+                },
+                Err(e) => {
+                    self.book_ui.status = Some(format!("Could not load the book: {e}"));
+                }
+            },
+            CoverEvent::Failed(e) => {
+                tracing::warn!("cover generation failed: {e:?}");
+                self.book_ui.status = Some(e.user_message());
+                if matches!(e, GenError::LoggedOut | GenError::OrgNotAllowed) {
+                    self.auth.check = Some(AuthCheck::NotConnected);
+                    self.auth.state = ConnectUiState::Idle;
+                    self.screen = Screen::Connect;
+                }
+            }
+        }
+    }
+
     pub fn palette(&self) -> theme::Palette {
         theme::Palette::for_theme(self.config.theme)
     }
@@ -914,6 +1049,7 @@ impl eframe::App for App {
         self.handle_screenshot_mode(ctx);
         self.poll_auth();
         self.poll_gen(ctx);
+        self.poll_cover(ctx);
         self.handle_typing_input(ctx);
         self.tick_timed_drill();
 

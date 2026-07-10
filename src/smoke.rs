@@ -142,7 +142,7 @@ fn book_cycle(live: bool) -> Result<(), String> {
         prompt: prompt::chapter_prompt(&book, 1, "", false, None, false),
         system_prompt: prompt::system_prompt(),
         model: if live { "opus".into() } else { "sonnet".into() },
-        plugin_dir,
+        plugin_dir: plugin_dir.clone(),
         cwd: book.dir.clone(),
         resume_session: None,
         fork_session: false,
@@ -213,6 +213,74 @@ fn book_cycle(live: bool) -> Result<(), String> {
         pdf.len(),
         live
     );
+    // Exports carry book content only: no premise/language prompt material. (Fake path
+    // only: a live chapter's prose could legitimately echo premise words.)
+    if !live && (md.contains("A test premise") || md.contains("*Language:")) {
+        return Err("markdown export leaked prompt material".into());
+    }
+
+    // Cover: claude designs a self-contained SVG which is validated, rasterized to PNG,
+    // stored with the book, and becomes page one of the PDF.
+    if !live {
+        std::env::set_var("FAKE_CLAUDE_MODE", "cover");
+    }
+    let model = if live { "opus" } else { "sonnet" };
+    let cancel = AtomicBool::new(false);
+    let cover = crate::core::book::cover::generate_cover_blocking(
+        &runner,
+        &reloaded,
+        model,
+        plugin_dir.clone(),
+        if live { 600 } else { 60 },
+        &cancel,
+    )
+    .map_err(|e| format!("cover generation failed: {e:?}"))?;
+    if !live {
+        std::env::remove_var("FAKE_CLAUDE_MODE");
+    }
+    if !cover.png.starts_with(b"\x89PNG") {
+        return Err("cover is not a PNG".into());
+    }
+    if !live && cover.used_fallback {
+        return Err("the canned SVG must render without the fallback".into());
+    }
+    std::fs::write(reloaded.cover_path(), &cover.png).map_err(|e| e.to_string())?;
+    let pdf_cover = crate::core::book::export::export_pdf(&reloaded)?;
+    if !pdf_cover.starts_with(b"%PDF") || pdf_cover.len() <= pdf.len() {
+        return Err(format!(
+            "cover did not land in the PDF ({} -> {} bytes)",
+            pdf.len(),
+            pdf_cover.len()
+        ));
+    }
+    println!(
+        "smoke: cover ok png={}B pdf={}B fallback={}",
+        cover.png.len(),
+        pdf_cover.len(),
+        cover.used_fallback
+    );
+
+    if !live {
+        // An unusable design (twice) must still yield a cover via the local fallback.
+        std::env::set_var("FAKE_CLAUDE_MODE", "cover_invalid");
+        let fb = crate::core::book::cover::generate_cover_blocking(
+            &runner,
+            &reloaded,
+            model,
+            plugin_dir,
+            60,
+            &AtomicBool::new(false),
+        )
+        .map_err(|e| format!("fallback cover failed: {e:?}"))?;
+        std::env::remove_var("FAKE_CLAUDE_MODE");
+        if !fb.used_fallback {
+            return Err("an invalid SVG must hit the typographic fallback".into());
+        }
+        if !fb.png.starts_with(b"\x89PNG") {
+            return Err("fallback cover is not a PNG".into());
+        }
+        println!("smoke: cover fallback ok png={}B", fb.png.len());
+    }
     Ok(())
 }
 

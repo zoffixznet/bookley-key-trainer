@@ -208,6 +208,32 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A stored cover becomes page one of the PDF (the embedded image makes the file
+    /// substantially larger), and the title page carries no prompt material.
+    #[test]
+    fn pdf_embeds_the_cover_as_page_one() {
+        let root = tmp_root();
+        let store = BookStore::new(root.clone());
+        let mut book = store
+            .create("Covered", "Esperanto", "A very secret premise.", false)
+            .unwrap();
+        book.write_chapter(1, "One", "Some prose.", "").unwrap();
+        let plain_pdf = export_pdf(&book).expect("pdf without cover");
+
+        let svg = crate::core::book::cover::fallback_cover_svg("Covered");
+        let png = crate::core::book::cover::rasterize_svg_to_png(&svg).expect("cover png");
+        std::fs::write(book.cover_path(), &png).unwrap();
+        let cover_pdf = export_pdf(&book).expect("pdf with cover");
+        assert!(cover_pdf.starts_with(b"%PDF"));
+        assert!(
+            cover_pdf.len() > plain_pdf.len() + 10_000,
+            "cover image must be embedded ({} -> {})",
+            plain_pdf.len(),
+            cover_pdf.len()
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn export_pdf_empty_book_errs() {
         let root = tmp_root();

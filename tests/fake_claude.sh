@@ -3,11 +3,13 @@
 # book-generation and Connect Claude paths can be exercised with zero real usage and no
 # auth. Behavior is selected by the subcommand and the FAKE_CLAUDE_MODE env var:
 #   (unset)      success: stream-json init + deltas + assistant + result with a chapter
-#   rate_limit   api_retry rate_limit, then error_during_execution
-#   logged_out   api_retry authentication_failed, then error_during_execution
-#   max_turns    result subtype error_max_turns
-#   hang         sleep forever (the app-side timeout must kill us)
-#   badcode      setup-token only: reject the pasted code
+#   rate_limit     api_retry rate_limit, then error_during_execution
+#   logged_out     api_retry authentication_failed, then error_during_execution
+#   max_turns      result subtype error_max_turns
+#   hang           sleep forever (the app-side timeout must kill us)
+#   badcode        setup-token only: reject the pasted code
+#   cover          success with a canned self-contained cover SVG in the result
+#   cover_invalid  success but the result contains no usable SVG (fallback path)
 set -u
 
 mode="${FAKE_CLAUDE_MODE:-success}"
@@ -61,6 +63,17 @@ fi
 init='{"type":"system","subtype":"init","cwd":".","session_id":"fake-session-0001","model":"claude-fake-1","tools":[],"mcp_servers":[],"plugins":[{"name":"novelist","path":"/fake"}],"slash_commands":["novelist:write-chapter"],"apiKeySource":"none"}'
 
 case "$mode" in
+    cover)
+        echo "$init"
+        svg="<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1600 2560'><defs><linearGradient id='dusk' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='#1B2A38'/><stop offset='1' stop-color='#3E2A24'/></linearGradient></defs><rect x='0' y='0' width='1600' height='2560' fill='url(#dusk)'/><circle cx='800' cy='820' r='340' fill='#C9A24B'/><rect x='240' y='1440' width='1120' height='8' fill='#E8E1D3'/><text x='800' y='1660' text-anchor='middle' font-family='serif' font-size='150' fill='#E8E1D3'>Smoke Test</text></svg>"
+        printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","session_id":"fake-session-0002","num_turns":1,"total_cost_usd":0}\n' "$svg"
+        exit 0
+        ;;
+    cover_invalid)
+        echo "$init"
+        printf '{"type":"result","subtype":"success","is_error":false,"result":"Here is a lovely verbal description of a cover, with no vector art at all.","session_id":"fake-session-0002","num_turns":1,"total_cost_usd":0}\n'
+        exit 0
+        ;;
     rate_limit)
         echo "$init"
         echo '{"type":"api_retry","error":"rate_limit","attempt":1,"max_retries":1,"retry_delay_ms":10}'
