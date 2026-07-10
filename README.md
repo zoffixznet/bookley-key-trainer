@@ -33,15 +33,24 @@ bar (and in Settings):
   drill over a flowing stream of words from the bundled list), *Paste text* (type
   exactly what you paste), *Book* (AI-generated fiction, see below).
 
-Word and Random drills run for a configurable duration (30s to 5m presets in Settings,
-default 2 minutes) and show results when time is up. Any session can be paused; paused
-time never counts toward the metrics, and the target text is veiled so it cannot be read
-ahead. Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency
-are shown while you type; the results screen adds a WPM-over-time graph, your slowest
-and most error-prone keys, net WPM, and personal bests, and Enter starts the next drill.
-Random mode quietly weights future rounds toward the keys you miss. Error handling is
-configurable: type-through, stop on letter, or stop on word (fix the word before you can
-leave it).
+Every mode starts behind a "Press Space to start" gate: the clock only runs once you
+press Space, and that press is never counted as typing. Word and Random drills run for a
+configurable duration (30s to 5m presets, pickable right on the start gate and in
+Settings as the default; default 2 minutes) and show results when time is up. In Random
+mode Backspace is a drillable key like any other. Any session can be paused (Space
+resumes); paused time never counts toward the metrics, and the target text is veiled so
+it cannot be read ahead. Paste and Book sessions have a "Reset stats" control that
+zeroes the timer and metrics without losing your place in the text.
+
+Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency are
+shown while you type; the results screen adds a WPM-over-time graph (labeled time axis
+and a solid-vs-dashed legend), your slowest and most error-prone keys (errors made while
+each key was expected, plus its average inter-keystroke time), net WPM, and personal
+bests, and Enter starts the next drill. Random mode quietly weights future rounds toward
+the keys you miss. Error handling is configurable: type-through, stop on letter, or stop
+on word (fix the word before you can leave it). Mistyped text is marked with a bright
+error ink plus an underline and a background tint, so the state never depends on color
+alone.
 
 Typing targets are normalized to plain keystrokes: accented letters fold to ASCII
 (E for É), smart dashes/quotes/ellipses become their plain equivalents, exotic Unicode
@@ -72,9 +81,15 @@ app asks you to confirm, and the author invents everything, including the title.
   the rewrite must still fit the rest of the book, and rewriting resets that chapter's
   typing progress.
 - Books live on disk as human-readable Markdown plus a continuity bible; export the
-  whole book as Markdown or a typeset PDF at any time. Exports open in your system's
-  default viewer and land in the app's data dir under `exports/` (the app shows the
-  exact path).
+  whole book as Markdown or a typeset PDF at any time. Exports contain the book only
+  (cover, title page, chapters); the premise and language you entered are generation
+  inputs and never appear in them. Exports open in your system's default viewer and
+  land in the app's data dir under `exports/` (the app shows the exact path).
+- "Generate cover" on the book page asks Claude to design a cover as a self-contained
+  SVG from the book's actual title and text, which the app validates and renders to a
+  PNG; it appears on the book page and as the full-bleed first page of the PDF. If a
+  design cannot be rendered the app falls back to a clean typographic cover, so the
+  button always yields one. Regenerating replaces it.
 - Generation defaults to the Opus model; Settings has a model picker (opus, sonnet,
   haiku, fable).
 
@@ -112,9 +127,10 @@ Random mode excludes F9/F10/F12 from its key pool so the shortcuts never collide
   against `tests/fake_claude.sh`; nothing touches the network or your subscription.
 - `make smoke` runs a headless end-to-end self-test through the real pipeline: typed
   sessions in every mode, a full book cycle (generate, parse, persist, type, export
-  Markdown and PDF), failure classification (rate limit, logged out, max turns), the
-  watchdog that kills a hung CLI, and the whole Connect Claude flow against a fake PTY.
-  It prints assertable `smoke: ... ok` lines and exits non-zero on failure.
+  Markdown and PDF), cover generation (canned SVG rendered, invalid SVG hitting the
+  typographic fallback), failure classification (rate limit, logged out, max turns),
+  the watchdog that kills a hung CLI, and the whole Connect Claude flow against a fake
+  PTY. It prints assertable `smoke: ... ok` lines and exits non-zero on failure.
 - `make screenshot` boots the real windowed app, renders a few frames, saves
   `smoke-screenshot.png`, and exits; useful to verify rendering on a new box.
 - `make lint` runs clippy (warnings are errors) and a rustfmt check.
