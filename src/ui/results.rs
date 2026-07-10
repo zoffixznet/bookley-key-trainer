@@ -1,129 +1,147 @@
-//! Results overlay: WPM-over-time line, per-key error/slowness feedback, accuracy,
-//! consistency, and personal-best tracking with a "drill your weak keys" affordance.
+//! Results: WPM-over-time line, per-key error/slowness feedback, accuracy, consistency,
+//! and personal-best tracking, laid out on the shared centered column.
 
-use egui::{Color32, Sense, Stroke, Vec2};
+use egui::{Color32, CornerRadius, Sense, Stroke, Vec2};
 
 use crate::core::config::ContentMode;
 use crate::ui::app::{App, Screen};
+use crate::ui::stage::COLUMN_W;
+use crate::ui::theme::{self, Palette};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
     let Some(result) = app.last_result.clone() else {
-        ui.label("No results yet.");
+        ui.vertical_centered(|ui| {
+            ui.add_space(80.0);
+            ui.label(egui::RichText::new("No results yet.").color(p.ghost));
+        });
         return;
     };
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Results")
-                    .color(p.brass)
-                    .size(24.0)
-                    .strong(),
-            );
-            if app.last_was_pb {
+        theme::centered_column(ui, COLUMN_W, |ui| {
+            ui.add_space(22.0);
+            ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("  Personal best  ")
-                        .color(p.ink_950)
-                        .background_color(p.brass)
-                        .strong(),
+                    egui::RichText::new("Results")
+                        .font(theme::display_font(26.0))
+                        .color(p.brass),
                 );
-            }
-        });
-        ui.add_space(12.0);
+                if app.last_was_pb {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("  PERSONAL BEST  ")
+                            .color(p.ink_850)
+                            .background_color(p.brass)
+                            .size(11.0)
+                            .strong(),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some(best) = app.stats.best_for(&result.mode) {
+                        ui.label(
+                            egui::RichText::new(format!("best {} wpm: {:.0}", result.mode, best))
+                                .color(p.ghost)
+                                .size(12.5),
+                        );
+                    }
+                });
+            });
+            ui.add_space(14.0);
 
-        // Big numbers.
-        ui.horizontal(|ui| {
-            big_stat(ui, &p, "wpm", &format!("{:.0}", result.wpm), p.verdigris);
-            big_stat(ui, &p, "raw", &format!("{:.0}", result.raw_wpm), p.ghost);
-            big_stat(
-                ui,
-                &p,
-                "accuracy",
-                &format!("{:.0}%", result.accuracy * 100.0),
-                p.paper,
-            );
-            big_stat(
-                ui,
-                &p,
-                "consistency",
-                &format!("{:.0}", result.consistency),
-                p.paper,
-            );
-            big_stat(
-                ui,
-                &p,
-                "net wpm",
-                &format!("{:.0}", result.net_wpm),
-                p.ghost,
-            );
-        });
-        if let Some(best) = app.stats.best_for(&result.mode) {
-            ui.label(
-                egui::RichText::new(format!("Best {} WPM: {:.0}", result.mode, best))
-                    .color(p.brass),
-            );
-        }
+            // Big numbers on one baseline.
+            ui.horizontal(|ui| {
+                big_stat(ui, &p, "wpm", &format!("{:.0}", result.wpm), p.verdigris);
+                big_stat(ui, &p, "raw", &format!("{:.0}", result.raw_wpm), p.ghost);
+                big_stat(
+                    ui,
+                    &p,
+                    "accuracy",
+                    &format!("{:.0}%", result.accuracy * 100.0),
+                    p.paper,
+                );
+                big_stat(
+                    ui,
+                    &p,
+                    "consistency",
+                    &format!("{:.0}", result.consistency),
+                    p.paper,
+                );
+                big_stat(
+                    ui,
+                    &p,
+                    "net wpm",
+                    &format!("{:.0}", result.net_wpm),
+                    p.ghost,
+                );
+                big_stat(
+                    ui,
+                    &p,
+                    "time",
+                    &format!(
+                        "{}:{:02}",
+                        result.elapsed_secs as u64 / 60,
+                        result.elapsed_secs as u64 % 60
+                    ),
+                    p.brass,
+                );
+            });
 
-        ui.add_space(16.0);
-        ui.label(
-            egui::RichText::new("WPM over time")
-                .color(p.ghost)
-                .size(14.0),
-        );
-        wpm_graph(ui, &p, &result);
+            ui.add_space(18.0);
+            section_label(ui, &p, "WPM OVER TIME");
+            theme::card(&p).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                wpm_graph(ui, &p, &result);
+            });
 
-        ui.add_space(16.0);
-        ui.label(
-            egui::RichText::new("Slow and error-prone keys")
-                .color(p.ghost)
-                .size(14.0),
-        );
-        heatmap(ui, &p, &result);
+            ui.add_space(14.0);
+            section_label(ui, &p, "SLOW AND ERROR-PRONE KEYS");
+            heatmap(ui, &p, &result);
 
-        ui.add_space(20.0);
-        // Primary action: a proper big button, also triggered by Enter. Book chapters do
-        // not get a "type again"; the next step there is the continue-the-book flow.
-        let is_book = app.config.content_mode == ContentMode::Book;
-        let label = if is_book {
-            "Continue the book (Enter)"
-        } else {
-            "Type again (Enter)"
-        };
-        let mut go = false;
-        ui.horizontal(|ui| {
-            let btn = egui::Button::new(
-                egui::RichText::new(label)
-                    .size(18.0)
-                    .strong()
-                    .color(p.ink_950),
-            )
-            .fill(p.verdigris)
-            .min_size(egui::vec2(260.0, 44.0))
-            .corner_radius(egui::CornerRadius::same(8));
-            if ui.add(btn).clicked() {
+            ui.add_space(22.0);
+            // Primary action: a proper big button, also triggered by Enter. Book chapters
+            // do not get a "type again"; there the next step is continuing the book.
+            let is_book = app.config.content_mode == ContentMode::Book;
+            let label = if is_book {
+                "Continue the book (Enter)"
+            } else {
+                "Type again (Enter)"
+            };
+            let mut go = false;
+            ui.horizontal(|ui| {
+                let btn = egui::Button::new(
+                    egui::RichText::new(label)
+                        .size(17.0)
+                        .strong()
+                        .color(p.ink_850),
+                )
+                .fill(p.verdigris)
+                .min_size(egui::vec2(270.0, 46.0))
+                .corner_radius(CornerRadius::same(9));
+                if ui.add(btn).clicked() {
+                    go = true;
+                }
+                ui.add_space(4.0);
+                if !is_book && ui.button("Drill weak keys (Random)").clicked() {
+                    app.config.content_mode = ContentMode::Random;
+                    app.save_config();
+                    app.start_session();
+                }
+            });
+            // Enter shortcut, guarded so the keystroke that finished the session (or a
+            // held Enter auto-repeat) cannot immediately restart it.
+            let settled = app
+                .results_at
+                .map(|t| t.elapsed().as_millis() > 400)
+                .unwrap_or(true);
+            if settled && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                 go = true;
             }
-            if !is_book && ui.button("Drill weak keys (Random)").clicked() {
-                app.config.content_mode = ContentMode::Random;
-                app.save_config();
-                app.start_session();
+            if go {
+                next_action(app);
             }
+            ui.add_space(24.0);
         });
-        // Enter shortcut, guarded so the keystroke that finished the session (or held
-        // Enter auto-repeat) cannot immediately restart it.
-        let settled = app
-            .results_at
-            .map(|t| t.elapsed().as_millis() > 400)
-            .unwrap_or(true);
-        if settled && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            go = true;
-        }
-        if go {
-            next_action(app);
-        }
-        ui.add_space(20.0);
     });
 }
 
@@ -136,36 +154,38 @@ fn next_action(app: &mut App) {
     }
 }
 
-fn big_stat(
-    ui: &mut egui::Ui,
-    p: &crate::ui::theme::Palette,
-    label: &str,
-    value: &str,
-    color: Color32,
-) {
+fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.label(
+        egui::RichText::new(text)
+            .color(p.ghost)
+            .size(10.5)
+            .extra_letter_spacing(1.4),
+    );
+    ui.add_space(2.0);
+}
+
+fn big_stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str, color: Color32) {
     ui.vertical(|ui| {
         ui.label(
             egui::RichText::new(value)
                 .color(color)
-                .size(40.0)
-                .monospace()
-                .strong(),
+                .font(theme::mono_font(38.0)),
         );
-        ui.label(egui::RichText::new(label).color(p.ghost).size(12.0));
+        ui.label(
+            egui::RichText::new(label)
+                .color(p.ghost)
+                .size(11.0)
+                .extra_letter_spacing(0.8),
+        );
     });
-    ui.add_space(24.0);
+    ui.add_space(26.0);
 }
 
-fn wpm_graph(
-    ui: &mut egui::Ui,
-    p: &crate::ui::theme::Palette,
-    r: &crate::core::metrics::SessionResult,
-) {
-    let w = ui.available_width().min(860.0);
-    let h = 160.0;
+fn wpm_graph(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
+    let w = ui.available_width();
+    let h = 150.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, egui::CornerRadius::same(8), p.ink_850);
     if r.samples.len() < 2 {
         painter.text(
             rect.center(),
@@ -176,7 +196,7 @@ fn wpm_graph(
         );
         return;
     }
-    let pad = 12.0;
+    let pad = 8.0;
     let max_wpm = r
         .samples
         .iter()
@@ -185,33 +205,44 @@ fn wpm_graph(
         .max(10.0);
     let max_t = r.samples.last().unwrap().t.max(0.001);
     let plot = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + pad, rect.top() + pad),
-        egui::pos2(rect.right() - pad, rect.bottom() - pad),
+        egui::pos2(rect.left() + pad + 26.0, rect.top() + pad),
+        egui::pos2(rect.right() - pad, rect.bottom() - pad - 4.0),
     );
+    // Light gridlines + axis figures at 0 / mid / max.
+    for frac in [0.0f32, 0.5, 1.0] {
+        let y = plot.bottom() - frac * plot.height();
+        painter.line_segment(
+            [egui::pos2(plot.left(), y), egui::pos2(plot.right(), y)],
+            Stroke::new(1.0, p.edge),
+        );
+        painter.text(
+            egui::pos2(plot.left() - 6.0, y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{:.0}", max_wpm * frac as f64),
+            egui::FontId::monospace(10.0),
+            p.ghost,
+        );
+    }
     let map = |t: f64, v: f64| {
         egui::pos2(
             plot.left() + (t / max_t) as f32 * plot.width(),
             plot.bottom() - (v / max_wpm) as f32 * plot.height(),
         )
     };
-    // Raw line (ghost) then wpm line (verdigris).
-    for (key, color) in [("raw", p.ghost), ("wpm", p.verdigris)] {
+    // Raw line (ghost) then wpm line (verdigris, heavier).
+    for (key, color, width) in [("raw", p.ghost, 1.5), ("wpm", p.verdigris, 2.5)] {
         let pts: Vec<egui::Pos2> = r
             .samples
             .iter()
             .map(|s| map(s.t, if key == "raw" { s.raw } else { s.wpm }))
             .collect();
         for w2 in pts.windows(2) {
-            painter.line_segment([w2[0], w2[1]], Stroke::new(2.0, color));
+            painter.line_segment([w2[0], w2[1]], Stroke::new(width, color));
         }
     }
 }
 
-fn heatmap(
-    ui: &mut egui::Ui,
-    p: &crate::ui::theme::Palette,
-    r: &crate::core::metrics::SessionResult,
-) {
+fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
     // Show up to the 12 worst keys (by errors then latency).
     let mut keys: Vec<&(String, u32, u32, f64)> = r.per_key.iter().collect();
     keys.sort_by(|a, b| {
@@ -230,26 +261,36 @@ fn heatmap(
             } else {
                 0.0
             };
-            let color = if err_rate > 0.0 {
-                lerp(p.ink_850, p.ribbon, err_rate.min(1.0))
+            let (fill, stroke) = if err_rate > 0.0 {
+                (
+                    p.ribbon.linear_multiply(0.10 + 0.25 * err_rate.min(1.0)),
+                    p.ribbon,
+                )
             } else if *lat > 250.0 {
-                lerp(p.ink_850, p.brass, ((*lat as f32 - 250.0) / 500.0).min(1.0))
+                (p.brass.linear_multiply(0.15), p.brass)
             } else {
-                p.ink_850
+                (p.ink_850, p.edge)
             };
-            let text = format!("{label}  {errors}e {lat:.0}ms");
-            ui.label(
-                egui::RichText::new(text)
-                    .color(p.paper)
-                    .background_color(color)
-                    .monospace(),
-            );
+            egui::Frame::new()
+                .fill(fill)
+                .stroke(Stroke::new(1.0, stroke))
+                .corner_radius(CornerRadius::same(7))
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(label.to_string())
+                                .font(theme::mono_font(14.0))
+                                .strong()
+                                .color(p.paper),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{errors} err \u{00B7} {lat:.0}ms"))
+                                .font(theme::mono_font(11.0))
+                                .color(p.ghost),
+                        );
+                    });
+                });
         }
     });
-}
-
-fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
-    let t = t.clamp(0.0, 1.0);
-    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
-    Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
 }

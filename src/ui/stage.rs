@@ -1,38 +1,45 @@
-//! The central typing stage: the manuscript strip (upcoming text ghosted, typed text
-//! bright, errors ribbon+underline, a verdigris caret), a quiet monospace HUD above, and
-//! the on-screen keyboard docked below.
+//! The typing stage: a centered play column holding the stats HUD, the manuscript panel
+//! (typed text bright, upcoming ghosted, errors ribbon-underlined, an unmissable current
+//! glyph), and the full-size keyboard docked below. Random-keys targets render as
+//! per-token chips instead of glyph cells.
 
-use egui::{Align2, Color32, FontId, Sense, Stroke, Vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Vec2};
 
-use crate::core::config::{CaretStyle, ContentMode};
-use crate::core::session::CharStatus;
+use crate::core::config::{CaretStyle, ContentMode, KeyboardMode};
+use crate::core::session::{CharStatus, Session};
 use crate::core::text_source::Expected;
 use crate::ui::app::{App, Screen};
 use crate::ui::keyboard;
+use crate::ui::theme::{self, Palette};
+
+/// The shared width of the play column.
+pub const COLUMN_W: f32 = 960.0;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
 
     // Paste mode with no session yet: show the paste box.
     if app.config.content_mode == ContentMode::Paste && app.session.is_none() {
-        paste_entry(app, ui);
+        theme::centered_column(ui, COLUMN_W, |ui| paste_entry(app, ui));
         return;
     }
 
     if app.session.is_none() {
         ui.vertical_centered(|ui| {
-            ui.add_space(80.0);
+            ui.add_space(100.0);
             if app.config.content_mode == ContentMode::Book {
                 ui.label(
                     egui::RichText::new("Open a book from the Books shelf to start typing.")
                         .color(p.ghost)
                         .size(16.0),
                 );
+                ui.add_space(8.0);
                 if ui.button("Go to Books").clicked() {
                     app.screen = Screen::Books;
                 }
             } else {
                 ui.label(egui::RichText::new("Ready.").color(p.ghost).size(16.0));
+                ui.add_space(8.0);
                 if ui.button("Start").clicked() {
                     app.start_session();
                 }
@@ -41,281 +48,496 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
-    // HUD.
-    hud(app, ui);
-    ui.add_space(8.0);
-
-    // Manuscript strip.
-    manuscript(app, ui);
-
-    // Spine progress in Book mode.
-    if app.config.content_mode == ContentMode::Book {
-        if let Some(s) = &app.session {
-            ui.add_space(6.0);
-            spine(ui, &p, s.progress_fraction());
-        }
+    // Keyboard docked at the bottom first (so the central column gets the remainder).
+    let next_key = app.session.as_ref().and_then(|s| s.next_physical_key());
+    let needs_shift = app
+        .session
+        .as_ref()
+        .and_then(|s| s.expected().map(|e| e.needs_shift()))
+        .unwrap_or(false);
+    let now = app.session_started_secs().unwrap_or(0.0);
+    if app.config.keyboard_mode != KeyboardMode::Hidden {
+        egui::Panel::bottom("keyboard_dock")
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(p.ink_950))
+            .show(ui, |ui| {
+                ui.add_space(2.0);
+                theme::centered_column(ui, 1160.0, |ui| {
+                    keyboard::draw(
+                        ui,
+                        &p,
+                        app.config.keyboard_mode,
+                        next_key,
+                        needs_shift,
+                        &app.flash,
+                        app.config.reduced_motion,
+                        now,
+                        app.config.show_numpad,
+                    );
+                });
+                ui.add_space(10.0);
+            });
     }
 
-    // Dock the keyboard at the bottom.
-    let next_key = app.session.as_ref().and_then(|s| s.next_physical_key());
-    let now = app.session_started_secs().unwrap_or(0.0);
-    egui::Panel::bottom("keyboard_dock")
-        .show_separator_line(false)
-        .frame(egui::Frame::NONE.fill(p.ink_950))
-        .show(ui, |ui| {
-            ui.add_space(6.0);
-            keyboard::draw(
-                ui,
-                &p,
-                app.config.keyboard_mode,
-                next_key,
-                &app.flash,
-                app.config.reduced_motion,
-                now,
-            );
-            ui.add_space(6.0);
-        });
-}
+    theme::centered_column(ui, COLUMN_W, |ui| {
+        ui.add_space(18.0);
+        hud(app, ui);
+        ui.add_space(10.0);
 
-fn hud(app: &App, ui: &mut egui::Ui) {
-    let p = app.palette();
-    let (wpm, raw, acc, cons, secs, frac) = match &app.session {
-        Some(s) => (
-            s.metrics.wpm(),
-            s.metrics.raw_wpm(),
-            s.metrics.accuracy() * 100.0,
-            s.metrics.consistency(),
-            s.metrics.elapsed_secs,
-            s.progress_fraction() * 100.0,
-        ),
-        None => (0.0, 0.0, 100.0, 100.0, 0.0, 0.0),
-    };
-    ui.horizontal(|ui| {
-        stat(ui, &p, "wpm", &format!("{wpm:.0}"), p.verdigris);
-        stat(ui, &p, "raw", &format!("{raw:.0}"), p.ghost);
-        stat(ui, &p, "acc", &format!("{acc:.0}%"), p.paper);
-        stat(ui, &p, "consistency", &format!("{cons:.0}"), p.paper);
-        stat(ui, &p, "time", &format!("{secs:.0}s"), p.ghost);
-        stat(ui, &p, "progress", &format!("{frac:.0}%"), p.brass);
-        if let Some(s) = &app.session {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // The manuscript panel, sized to its content.
+        let paused = app.is_paused();
+        theme::card(&p).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let is_keys_target = app
+                .session
+                .as_ref()
+                .map(|s| s.target.items.iter().any(|e| !e.is_char()))
+                .unwrap_or(false);
+            if let Some(session) = &app.session {
+                if is_keys_target {
+                    chips_panel(ui, &p, session, paused);
+                } else {
+                    manuscript_panel(ui, &p, session, app.config.caret, paused);
+                }
+            }
+        });
+
+        // Book mode: a thin spine fills as the chapter is typed.
+        if app.config.content_mode == ContentMode::Book {
+            if let Some(s) = &app.session {
+                ui.add_space(8.0);
+                spine(ui, &p, s.progress_fraction());
+            }
+        }
+
+        // Paused overlay controls.
+        if paused {
+            ui.add_space(14.0);
+            ui.vertical_centered(|ui| {
                 ui.label(
-                    egui::RichText::new(&s.target.title)
-                        .color(p.brass)
-                        .italics(),
+                    egui::RichText::new("Paused")
+                        .font(theme::display_font(26.0))
+                        .color(p.brass),
                 );
+                ui.label(
+                    egui::RichText::new("The clock is stopped; paused time never counts.")
+                        .color(p.ghost)
+                        .size(13.0),
+                );
+                ui.add_space(6.0);
+                let btn = egui::Button::new(
+                    egui::RichText::new("Resume")
+                        .size(16.0)
+                        .strong()
+                        .color(p.ink_850),
+                )
+                .fill(p.verdigris)
+                .min_size(egui::vec2(160.0, 40.0))
+                .corner_radius(CornerRadius::same(8));
+                if ui.add(btn).clicked() {
+                    app.toggle_pause();
+                }
             });
         }
     });
 }
 
-fn stat(
-    ui: &mut egui::Ui,
-    p: &crate::ui::theme::Palette,
-    label: &str,
-    value: &str,
-    color: Color32,
-) {
-    ui.vertical(|ui| {
+/// The stats HUD: one aligned baseline of tabular numbers on the play column.
+fn hud(app: &mut App, ui: &mut egui::Ui) {
+    let p = app.palette();
+    let (wpm, raw, acc, cons, time_str, right_str) = match &app.session {
+        Some(s) => {
+            let active = app.session_secs();
+            let time_str = match s.time_left(active) {
+                Some(left) => format_clock(left),
+                None => format_clock(active),
+            };
+            let right = match app.config.content_mode {
+                ContentMode::Book | ContentMode::Paste => {
+                    format!("{:.0}%", s.progress_fraction() * 100.0)
+                }
+                _ => String::new(),
+            };
+            (
+                s.metrics.wpm(),
+                s.metrics.raw_wpm(),
+                s.metrics.accuracy() * 100.0,
+                s.metrics.consistency(),
+                time_str,
+                right,
+            )
+        }
+        None => (0.0, 0.0, 100.0, 100.0, "0:00".to_string(), String::new()),
+    };
+
+    ui.horizontal(|ui| {
+        stat(ui, &p, &format!("{wpm:.0}"), "wpm", p.verdigris);
+        stat(ui, &p, &format!("{raw:.0}"), "raw", p.ghost);
+        stat(ui, &p, &format!("{acc:.0}%"), "accuracy", p.paper);
+        stat(ui, &p, &format!("{cons:.0}"), "consistency", p.paper);
+        stat(ui, &p, &time_str, "time", p.brass);
+        if !right_str.is_empty() {
+            stat(ui, &p, &right_str, "progress", p.ghost);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Pause / resume control.
+            let label = if app.is_paused() { "Resume" } else { "Pause" };
+            if ui.button(label).clicked() {
+                app.toggle_pause();
+            }
+            // The quiet context label: what is being typed.
+            let context = match app.config.content_mode {
+                ContentMode::Word => "word drill".to_string(),
+                ContentMode::Random => "random keys".to_string(),
+                ContentMode::Paste => "pasted text".to_string(),
+                ContentMode::Book => app
+                    .session
+                    .as_ref()
+                    .map(|s| s.target.title.clone())
+                    .unwrap_or_default(),
+            };
+            ui.label(egui::RichText::new(context).color(p.ghost).size(12.5));
+        });
+    });
+}
+
+fn stat(ui: &mut egui::Ui, p: &Palette, value: &str, label: &str, color: Color32) {
+    ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(value)
                 .color(color)
-                .size(22.0)
-                .monospace()
+                .font(theme::mono_font(21.0))
                 .strong(),
         );
-        ui.label(egui::RichText::new(label).color(p.ghost).size(11.0));
+        ui.label(egui::RichText::new(label).color(p.ghost).size(11.5));
     });
-    ui.add_space(18.0);
+    ui.add_space(10.0);
 }
 
-/// Draw the manuscript strip: a wrapped monospace rendering of the target with per-char
-/// status coloring and a caret at the cursor.
-fn manuscript(app: &App, ui: &mut egui::Ui) {
-    let p = app.palette();
-    let Some(session) = &app.session else {
-        return;
-    };
-    let font_size = 26.0;
-    let font = FontId::monospace(font_size);
-    let char_w = font_size * 0.62;
-    let line_h = font_size * 1.5;
+fn format_clock(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
 
-    let avail_w = ui.available_width().min(900.0);
+/// Character targets (word / paste / book): a wrapped monospace manuscript with per-char
+/// status coloring and a high-contrast current glyph.
+fn manuscript_panel(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    session: &Session,
+    caret: CaretStyle,
+    paused: bool,
+) {
+    let font_size = 25.0;
+    let font = FontId::monospace(font_size);
+    let char_w = font_size * 0.601; // Plex Mono advance
+    let line_h = font_size * 1.55;
+
+    let avail_w = ui.available_width();
     let cols = ((avail_w / char_w).floor() as usize).max(10);
 
-    // Wrap items into lines, breaking on spaces where possible.
+    // Word-aware wrap: whole words move to the next line instead of breaking mid-word;
+    // newlines force a wrap. Words longer than a line hard-break.
     let items = &session.target.items;
     let mut lines: Vec<Vec<usize>> = vec![Vec::new()];
-    let mut col = 0;
-    for (i, item) in items.iter().enumerate() {
-        if col >= cols {
-            lines.push(Vec::new());
-            col = 0;
-        }
-        lines.last_mut().unwrap().push(i);
-        col += 1;
-        // Prefer to wrap after spaces near the edge; always wrap after a newline so
-        // paragraph breaks read as paragraph breaks.
-        if matches!(item, Expected::Char('\n'))
-            || (matches!(item, Expected::Char(' ')) && col > cols.saturating_sub(6))
-        {
-            lines.push(Vec::new());
-            col = 0;
+    let mut col = 0usize;
+    let mut i = 0usize;
+    while i < items.len() {
+        match &items[i] {
+            Expected::Char('\n') => {
+                lines.last_mut().unwrap().push(i);
+                lines.push(Vec::new());
+                col = 0;
+                i += 1;
+            }
+            Expected::Char(' ') => {
+                lines.last_mut().unwrap().push(i);
+                col += 1;
+                if col >= cols {
+                    lines.push(Vec::new());
+                    col = 0;
+                }
+                i += 1;
+            }
+            _ => {
+                // Measure the word (up to the next space/newline).
+                let mut j = i;
+                while j < items.len()
+                    && !matches!(items[j], Expected::Char(' ') | Expected::Char('\n'))
+                {
+                    j += 1;
+                }
+                let word_len = j - i;
+                if col > 0 && col + word_len > cols && word_len <= cols {
+                    lines.push(Vec::new());
+                    col = 0;
+                }
+                for idx in i..j {
+                    if col >= cols {
+                        lines.push(Vec::new());
+                        col = 0;
+                    }
+                    lines.last_mut().unwrap().push(idx);
+                    col += 1;
+                }
+                i = j;
+            }
         }
     }
 
-    // Show a window of lines around the caret so long texts scroll.
-    let caret = session.cursor.min(items.len().saturating_sub(1));
-    let caret_line = lines.iter().position(|l| l.contains(&caret)).unwrap_or(0);
-    let max_lines = 6usize;
+    // A window of lines around the caret; the panel sizes to what it shows.
+    let caret_i = session.cursor.min(items.len().saturating_sub(1));
+    let caret_line = lines.iter().position(|l| l.contains(&caret_i)).unwrap_or(0);
+    let max_lines = 4usize;
+    let shown = lines.len().min(max_lines);
     let start_line = caret_line
-        .saturating_sub(2)
-        .min(lines.len().saturating_sub(max_lines));
-    let end_line = (start_line + max_lines).min(lines.len());
+        .saturating_sub(1)
+        .min(lines.len().saturating_sub(shown));
+    let end_line = (start_line + shown).min(lines.len());
 
-    let strip_h = line_h * max_lines as f32 + 24.0;
+    let strip_h = line_h * shown as f32 + 10.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, strip_h), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, egui::CornerRadius::same(8), p.ink_850);
 
-    let pad = 16.0;
-    let mut y = rect.top() + pad + font_size * 0.5;
+    let mut y = rect.top() + 8.0 + font_size * 0.55;
     for line in lines.iter().take(end_line).skip(start_line) {
-        let mut x = rect.left() + pad;
+        let mut x = rect.left();
         for &i in line {
             let item = &items[i];
             let status = session.status[i];
             let ch = match item {
                 Expected::Char(c) => *c,
-                Expected::PhysicalKey(_) => '\u{25A1}',
+                Expected::PhysicalKey(_) => ' ',
             };
-            let (color, underline) = match status {
+            let is_current = i == session.cursor && !session.is_complete();
+            let (mut color, underline) = match status {
                 CharStatus::Pending => (p.ghost, false),
                 CharStatus::Correct => (p.paper, false),
                 CharStatus::Wrong => (p.ribbon, true),
             };
-            // Caret.
-            if i == session.cursor {
-                draw_caret(&painter, &p, app.config.caret, x, y, char_w, font_size);
-            }
-            // For physical-key targets, draw the key label instead of the box glyph.
-            if let Expected::PhysicalKey(_) = item {
-                painter.text(
-                    egui::pos2(x, y),
-                    Align2::LEFT_CENTER,
-                    item.label(),
-                    FontId::monospace(font_size * 0.5),
-                    color,
-                );
-            } else {
-                // Show newlines as a dim pilcrow so the user knows to press Enter.
-                let (display, color) = if ch == '\n' {
-                    ('\u{00B6}', color.linear_multiply(0.6))
-                } else {
-                    (ch, color)
-                };
-                painter.text(
-                    egui::pos2(x, y),
-                    Align2::LEFT_CENTER,
-                    display,
-                    font.clone(),
-                    color,
-                );
-                if underline {
-                    painter.line_segment(
-                        [
-                            egui::pos2(x, y + font_size * 0.55),
-                            egui::pos2(x + char_w, y + font_size * 0.55),
-                        ],
-                        Stroke::new(2.0, p.ribbon),
-                    );
+
+            // The current glyph is the most prominent thing on screen: a solid accent
+            // block with a background-colored glyph (block caret), or a strong under-bar
+            // with a brightened glyph.
+            if is_current {
+                match caret {
+                    CaretStyle::Block => {
+                        let r = Rect::from_min_size(
+                            egui::pos2(x - 1.0, y - font_size * 0.62),
+                            Vec2::new(char_w + 2.0, font_size * 1.24),
+                        );
+                        painter.rect_filled(r, CornerRadius::same(3), p.verdigris);
+                        color = p.ink_850; // paper-on-accent: maximum contrast
+                    }
+                    CaretStyle::Bar => {
+                        painter.line_segment(
+                            [
+                                egui::pos2(x - 1.5, y - font_size * 0.62),
+                                egui::pos2(x - 1.5, y + font_size * 0.55),
+                            ],
+                            Stroke::new(2.5, p.verdigris),
+                        );
+                        color = p.paper;
+                    }
+                    CaretStyle::Underline => {
+                        painter.line_segment(
+                            [
+                                egui::pos2(x, y + font_size * 0.58),
+                                egui::pos2(x + char_w, y + font_size * 0.58),
+                            ],
+                            Stroke::new(3.0, p.verdigris),
+                        );
+                        color = p.paper;
+                    }
                 }
+            }
+
+            // Show newlines as a dim pilcrow so the user knows to press Enter.
+            let display = if ch == '\n' { '\u{00B6}' } else { ch };
+            let color = if ch == '\n' && !is_current {
+                color.linear_multiply(0.55)
+            } else {
+                color
+            };
+            painter.text(
+                egui::pos2(x, y),
+                Align2::LEFT_CENTER,
+                display,
+                font.clone(),
+                color,
+            );
+            if underline && !is_current {
+                painter.line_segment(
+                    [
+                        egui::pos2(x, y + font_size * 0.58),
+                        egui::pos2(x + char_w, y + font_size * 0.58),
+                    ],
+                    Stroke::new(2.0, p.ribbon),
+                );
             }
             x += char_w;
         }
-        // Caret at end of the target (after last char).
-        if session.cursor == items.len() && line == lines.last().unwrap() {
-            draw_caret(&painter, &p, app.config.caret, x, y, char_w, font_size);
-        }
         y += line_h;
+    }
+
+    if paused {
+        blur_overlay(&painter, rect, p);
     }
 }
 
-fn draw_caret(
-    painter: &egui::Painter,
-    p: &crate::ui::theme::Palette,
-    style: CaretStyle,
-    x: f32,
-    y: f32,
-    char_w: f32,
-    font_size: f32,
-) {
-    match style {
-        CaretStyle::Block => {
-            let r = egui::Rect::from_min_size(
-                egui::pos2(x, y - font_size * 0.6),
-                Vec2::new(char_w, font_size * 1.15),
-            );
-            painter.rect_filled(
-                r,
-                egui::CornerRadius::same(2),
-                p.verdigris.linear_multiply(0.55),
-            );
+/// Physical-key targets (Random keys): each key name is its own measured chip.
+fn chips_panel(ui: &mut egui::Ui, p: &Palette, session: &Session, paused: bool) {
+    let font = FontId::monospace(15.0);
+    let pad_x = 10.0;
+    let chip_h = 30.0;
+    let gap = 8.0;
+    let row_gap = 10.0;
+
+    let avail_w = ui.available_width();
+    let items = &session.target.items;
+
+    // Measure every chip, then flow them into rows.
+    let widths: Vec<f32> = ui.fonts_mut(|f| {
+        items
+            .iter()
+            .map(|e| {
+                let label = e.label();
+                let galley = f.layout_no_wrap(label, font.clone(), Color32::WHITE);
+                galley.size().x + pad_x * 2.0
+            })
+            .collect()
+    });
+    let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut x = 0.0;
+    for (i, w) in widths.iter().enumerate() {
+        if x + w > avail_w && !rows.last().unwrap().is_empty() {
+            rows.push(Vec::new());
+            x = 0.0;
         }
-        CaretStyle::Bar => {
-            painter.line_segment(
-                [
-                    egui::pos2(x, y - font_size * 0.6),
-                    egui::pos2(x, y + font_size * 0.55),
-                ],
-                Stroke::new(2.5, p.verdigris),
-            );
-        }
-        CaretStyle::Underline => {
-            painter.line_segment(
-                [
-                    egui::pos2(x, y + font_size * 0.6),
-                    egui::pos2(x + char_w, y + font_size * 0.6),
-                ],
-                Stroke::new(3.0, p.verdigris),
-            );
-        }
+        rows.last_mut().unwrap().push(i);
+        x += w + gap;
     }
+
+    // Window of rows around the cursor.
+    let cur = session.cursor.min(items.len().saturating_sub(1));
+    let cur_row = rows.iter().position(|r| r.contains(&cur)).unwrap_or(0);
+    let max_rows = 4usize;
+    let shown = rows.len().min(max_rows);
+    let start = cur_row
+        .saturating_sub(1)
+        .min(rows.len().saturating_sub(shown));
+    let end = (start + shown).min(rows.len());
+
+    let panel_h = shown as f32 * (chip_h + row_gap) + 6.0;
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(avail_w, panel_h), Sense::hover());
+    let painter = ui.painter_at(rect);
+
+    let mut y = rect.top() + 4.0;
+    for row in rows.iter().take(end).skip(start) {
+        let mut x = rect.left();
+        for &i in row {
+            let w = widths[i];
+            let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, chip_h));
+            let status = session.status[i];
+            let is_current = i == session.cursor && !session.is_complete();
+            let (fill, text_c, stroke) = if is_current {
+                (p.verdigris, p.ink_850, Stroke::new(1.5, p.verdigris))
+            } else {
+                match status {
+                    CharStatus::Pending => (p.ink_850, p.ghost, Stroke::new(1.0, p.edge)),
+                    CharStatus::Correct => (
+                        p.verdigris.linear_multiply(0.12),
+                        p.paper,
+                        Stroke::new(1.0, p.edge),
+                    ),
+                    CharStatus::Wrong => (
+                        p.ribbon.linear_multiply(0.15),
+                        p.ribbon,
+                        Stroke::new(1.2, p.ribbon),
+                    ),
+                }
+            };
+            painter.rect_filled(r, CornerRadius::same(7), fill);
+            painter.rect_stroke(r, CornerRadius::same(7), stroke, egui::StrokeKind::Inside);
+            painter.text(
+                r.center(),
+                Align2::CENTER_CENTER,
+                items[i].label(),
+                font.clone(),
+                text_c,
+            );
+            x += w + gap;
+        }
+        y += chip_h + row_gap;
+    }
+
+    if paused {
+        blur_overlay(&painter, rect, p);
+    }
+}
+
+/// Dim/veil the target so it cannot be read ahead while paused.
+fn blur_overlay(painter: &egui::Painter, rect: Rect, p: &Palette) {
+    painter.rect_filled(
+        rect.expand(6.0),
+        CornerRadius::same(8),
+        p.ink_850.gamma_multiply(0.93),
+    );
+    painter.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        "\u{2016}",
+        FontId::monospace(30.0),
+        p.ghost,
+    );
 }
 
 /// A thin spine/progress bar that fills as the chapter is typed (Book mode).
-fn spine(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, frac: f32) {
-    let w = ui.available_width().min(900.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 8.0), Sense::hover());
+fn spine(ui: &mut egui::Ui, p: &Palette, frac: f32) {
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 6.0), Sense::hover());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, egui::CornerRadius::same(4), p.ink_850);
-    let fill = egui::Rect::from_min_size(rect.min, Vec2::new(w * frac.clamp(0.0, 1.0), 8.0));
-    painter.rect_filled(fill, egui::CornerRadius::same(4), p.brass);
+    painter.rect_filled(rect, CornerRadius::same(3), p.edge);
+    let fill = Rect::from_min_size(rect.min, Vec2::new(w * frac.clamp(0.0, 1.0), 6.0));
+    painter.rect_filled(fill, CornerRadius::same(3), p.brass);
 }
 
 fn paste_entry(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
-    ui.add_space(20.0);
+    ui.add_space(26.0);
     ui.label(
         egui::RichText::new("Paste the text you want to type")
-            .color(p.brass)
-            .size(18.0),
+            .font(theme::display_font(22.0))
+            .color(p.brass),
+    );
+    ui.label(
+        egui::RichText::new("Fancy punctuation and accents are simplified into plain keystrokes.")
+            .color(p.ghost)
+            .size(12.5),
     );
     ui.add_space(8.0);
-    ui.add(
-        egui::TextEdit::multiline(&mut app.paste_input)
-            .desired_rows(8)
-            .desired_width(f32::INFINITY)
-            .hint_text("Paste or type any text here, then press Start."),
-    );
-    ui.add_space(8.0);
+    theme::card(&p).show(ui, |ui| {
+        ui.add(
+            egui::TextEdit::multiline(&mut app.paste_input)
+                .desired_rows(8)
+                .desired_width(f32::INFINITY)
+                .frame(egui::Frame::new())
+                .hint_text("Paste or type any text here, then press Start."),
+        );
+    });
+    ui.add_space(10.0);
     ui.horizontal(|ui| {
         let empty = app.paste_input.trim().is_empty();
-        if ui
-            .add_enabled(!empty, egui::Button::new("Start typing this"))
-            .clicked()
-        {
+        let btn = egui::Button::new(
+            egui::RichText::new("Start typing this")
+                .size(15.0)
+                .strong()
+                .color(p.ink_850),
+        )
+        .fill(p.verdigris)
+        .min_size(egui::vec2(180.0, 38.0))
+        .corner_radius(CornerRadius::same(8));
+        if ui.add_enabled(!empty, btn).clicked() {
             app.start_session();
         }
         if app.paste_input.chars().count() > 20_000 {

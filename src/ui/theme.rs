@@ -1,4 +1,9 @@
-//! "Manuscript & Ribbon" visual identity: palette, fonts, and egui style setup.
+//! "Manuscript & Ribbon" visual identity: palette, embedded fonts, and egui style setup.
+//!
+//! The light "foolscap paper" theme is the flagship (and the default); the dark ink
+//! theme mirrors it. Fonts: IBM Plex Sans (UI), IBM Plex Mono (typing targets, stats),
+//! Young Serif (the wordmark and book titles), all under the SIL Open Font License and
+//! recorded in NOTICE.
 
 use egui::{Color32, CornerRadius, FontFamily, FontId, Stroke};
 
@@ -7,49 +12,70 @@ use crate::core::config::Theme;
 /// The named palette. Two themes share the same accent semantics.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
-    /// Base background.
+    /// Window ground.
     pub ink_950: Color32,
-    /// Panels / cards.
+    /// Cards / panels sitting on the ground.
     pub ink_850: Color32,
-    /// Primary foreground / correctly-typed text.
+    /// Primary text / correctly-typed glyphs.
     pub paper: Color32,
-    /// Untyped / upcoming text (dim), dividers.
+    /// Untyped / upcoming text, secondary labels.
     pub ghost: Color32,
-    /// Signature interactive accent (caret, next-key ring, active nav, primary buttons).
+    /// Signature interactive accent: caret, next-key ring, primary buttons.
     pub verdigris: Color32,
-    /// Secondary accent (wordmark, titles, chapter headings, PB medals).
+    /// Secondary accent: wordmark, titles, personal bests, press-flash.
     pub brass: Color32,
-    /// Error / destructive.
+    /// Errors and destructive actions only.
     pub ribbon: Color32,
-    /// Eight finger-zone hues (index 0..8, thumbs share index 4).
+    /// Hairlines / borders on cards.
+    pub edge: Color32,
+    /// Keycap face, top highlight, bottom lip, edge stroke, and label.
+    pub key_face: Color32,
+    pub key_top: Color32,
+    pub key_lip: Color32,
+    pub key_edge: Color32,
+    pub key_text: Color32,
+    /// Eight muted finger-zone hues (index 0..8, thumbs share index 4).
     pub finger: [Color32; 9],
 }
 
 impl Palette {
-    pub fn dark() -> Self {
+    /// Flagship: warm foolscap paper, ink text, patina accents.
+    pub fn light() -> Self {
         Palette {
-            ink_950: Color32::from_rgb(0x14, 0x11, 0x0E),
-            ink_850: Color32::from_rgb(0x20, 0x1B, 0x16),
-            paper: Color32::from_rgb(0xE8, 0xE1, 0xD3),
-            ghost: Color32::from_rgb(0x7C, 0x72, 0x63),
-            verdigris: Color32::from_rgb(0x3E, 0x9C, 0x8C),
-            brass: Color32::from_rgb(0xC9, 0xA2, 0x4B),
-            ribbon: Color32::from_rgb(0xC4, 0x36, 0x2F),
-            finger: FINGER_DARK,
+            ink_950: Color32::from_rgb(0xF1, 0xEB, 0xDD), // foolscap ground
+            ink_850: Color32::from_rgb(0xFA, 0xF6, 0xEC), // paper card
+            paper: Color32::from_rgb(0x2B, 0x25, 0x1C),   // ink text
+            ghost: Color32::from_rgb(0xA3, 0x97, 0x83),
+            verdigris: Color32::from_rgb(0x1F, 0x6F, 0x62),
+            brass: Color32::from_rgb(0x8F, 0x6D, 0x1F),
+            ribbon: Color32::from_rgb(0xB0, 0x35, 0x2C),
+            edge: Color32::from_rgb(0xDC, 0xD3, 0xC0),
+            key_face: Color32::from_rgb(0xFB, 0xF8, 0xF0),
+            key_top: Color32::from_rgb(0xFF, 0xFD, 0xF7),
+            key_lip: Color32::from_rgb(0xC9, 0xBE, 0xA9),
+            key_edge: Color32::from_rgb(0xCF, 0xC5, 0xB0),
+            key_text: Color32::from_rgb(0x4A, 0x42, 0x36),
+            finger: FINGER_LIGHT,
         }
     }
 
-    pub fn light() -> Self {
-        // Foolscap paper theme: warm off-white surfaces, ink-dark text, same accents.
+    /// Dark ink workspace for long sessions.
+    pub fn dark() -> Self {
         Palette {
-            ink_950: Color32::from_rgb(0xEC, 0xE6, 0xD8),
-            ink_850: Color32::from_rgb(0xDD, 0xD5, 0xC3),
-            paper: Color32::from_rgb(0x23, 0x1E, 0x18),
-            ghost: Color32::from_rgb(0x9A, 0x8F, 0x7C),
-            verdigris: Color32::from_rgb(0x2C, 0x7A, 0x6D),
-            brass: Color32::from_rgb(0x9A, 0x77, 0x22),
-            ribbon: Color32::from_rgb(0xA8, 0x2A, 0x24),
-            finger: FINGER_LIGHT,
+            ink_950: Color32::from_rgb(0x15, 0x12, 0x0E),
+            ink_850: Color32::from_rgb(0x21, 0x1C, 0x16),
+            paper: Color32::from_rgb(0xEA, 0xE3, 0xD5),
+            ghost: Color32::from_rgb(0x85, 0x7A, 0x6A),
+            verdigris: Color32::from_rgb(0x49, 0xA8, 0x97),
+            brass: Color32::from_rgb(0xCF, 0xA9, 0x54),
+            ribbon: Color32::from_rgb(0xD2, 0x4A, 0x41),
+            edge: Color32::from_rgb(0x33, 0x2C, 0x23),
+            key_face: Color32::from_rgb(0x2A, 0x24, 0x1D),
+            key_top: Color32::from_rgb(0x32, 0x2B, 0x23),
+            key_lip: Color32::from_rgb(0x0C, 0x0A, 0x08),
+            key_edge: Color32::from_rgb(0x3E, 0x36, 0x2B),
+            key_text: Color32::from_rgb(0xD8, 0xD0, 0xC0),
+            finger: FINGER_DARK,
         }
     }
 
@@ -61,37 +87,84 @@ impl Palette {
     }
 }
 
-/// Eight muted, dark-friendly finger-zone hues (index 8 duplicated for symmetry / pinky).
-const FINGER_DARK: [Color32; 9] = [
-    Color32::from_rgb(0x5A, 0x3E, 0x4A), // left pinky  - muted plum
-    Color32::from_rgb(0x4A, 0x40, 0x2E), // left ring   - olive
-    Color32::from_rgb(0x2E, 0x44, 0x4A), // left middle - teal-slate
-    Color32::from_rgb(0x3A, 0x4A, 0x35), // left index  - moss
-    Color32::from_rgb(0x38, 0x33, 0x2A), // thumbs      - warm stone
-    Color32::from_rgb(0x40, 0x3A, 0x2E), // right index - bronze
-    Color32::from_rgb(0x2E, 0x3E, 0x4E), // right middle- steel blue
-    Color32::from_rgb(0x4A, 0x38, 0x2E), // right ring  - umber
-    Color32::from_rgb(0x4A, 0x30, 0x40), // right pinky - mauve
-];
-
+/// Muted finger-zone hues used as small accents on the keycap lips.
 const FINGER_LIGHT: [Color32; 9] = [
-    Color32::from_rgb(0xD8, 0xC0, 0xC8),
-    Color32::from_rgb(0xD2, 0xCB, 0xB0),
-    Color32::from_rgb(0xBF, 0xD0, 0xD2),
-    Color32::from_rgb(0xC6, 0xD2, 0xBD),
-    Color32::from_rgb(0xD6, 0xCE, 0xBE),
-    Color32::from_rgb(0xD8, 0xCC, 0xB6),
-    Color32::from_rgb(0xC0, 0xCE, 0xDA),
-    Color32::from_rgb(0xD8, 0xC6, 0xB4),
-    Color32::from_rgb(0xD8, 0xC2, 0xCE),
+    Color32::from_rgb(0xB5, 0x6B, 0x8A), // left pinky  - plum
+    Color32::from_rgb(0xA8, 0x8A, 0x3A), // left ring   - olive
+    Color32::from_rgb(0x3E, 0x8F, 0xA0), // left middle - teal
+    Color32::from_rgb(0x63, 0x9B, 0x4C), // left index  - moss
+    Color32::from_rgb(0x9A, 0x8B, 0x74), // thumbs      - stone
+    Color32::from_rgb(0xC0, 0x7A, 0x36), // right index - amber
+    Color32::from_rgb(0x54, 0x7E, 0xC0), // right middle- steel blue
+    Color32::from_rgb(0xB0, 0x64, 0x40), // right ring  - umber
+    Color32::from_rgb(0x8F, 0x62, 0xA8), // right pinky - mauve
 ];
 
-/// Font role sizes used across the UI.
+const FINGER_DARK: [Color32; 9] = [
+    Color32::from_rgb(0xC8, 0x84, 0x9E),
+    Color32::from_rgb(0xBB, 0xA0, 0x55),
+    Color32::from_rgb(0x5E, 0xA8, 0xB8),
+    Color32::from_rgb(0x7F, 0xB2, 0x69),
+    Color32::from_rgb(0xA8, 0x9B, 0x86),
+    Color32::from_rgb(0xD0, 0x92, 0x52),
+    Color32::from_rgb(0x74, 0x97, 0xD4),
+    Color32::from_rgb(0xC4, 0x7E, 0x5C),
+    Color32::from_rgb(0xA8, 0x7E, 0xBE),
+];
+
+/// Font role helpers.
 pub fn mono_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Monospace)
 }
 pub fn ui_font(size: f32) -> FontId {
     FontId::new(size, FontFamily::Proportional)
+}
+/// The literary display face (Young Serif), for the wordmark and book titles.
+pub fn display_family() -> FontFamily {
+    FontFamily::Name("display".into())
+}
+pub fn display_font(size: f32) -> FontId {
+    FontId::new(size, display_family())
+}
+
+/// Install the embedded fonts: Plex Sans for UI, Plex Mono for typing/stats, Young Serif
+/// as the named "display" family. egui's built-ins stay as fallbacks (emoji coverage).
+pub fn install_fonts(ctx: &egui::Context) {
+    use egui::epaint::text::{FontData, FontInsert, FontPriority, InsertFontFamily};
+
+    let inserts = [
+        (
+            "plex-sans",
+            &include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf")[..],
+            vec![InsertFontFamily {
+                family: FontFamily::Proportional,
+                priority: FontPriority::Highest,
+            }],
+        ),
+        (
+            "plex-mono",
+            &include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf")[..],
+            vec![InsertFontFamily {
+                family: FontFamily::Monospace,
+                priority: FontPriority::Highest,
+            }],
+        ),
+        (
+            "young-serif",
+            &include_bytes!("../../assets/fonts/YoungSerif-Regular.ttf")[..],
+            vec![InsertFontFamily {
+                family: display_family(),
+                priority: FontPriority::Highest,
+            }],
+        ),
+    ];
+    for (name, bytes, families) in inserts {
+        ctx.add_font(FontInsert::new(
+            name,
+            FontData::from_static(bytes),
+            families,
+        ));
+    }
 }
 
 /// Apply the palette to egui's visuals for a consistent look. Called on theme change.
@@ -107,32 +180,73 @@ pub fn apply_style(ctx: &egui::Context, theme: Theme) {
     visuals.faint_bg_color = p.ink_850;
     visuals.override_text_color = Some(p.paper);
     visuals.hyperlink_color = p.verdigris;
-    visuals.selection.bg_fill = p.verdigris.linear_multiply(0.4);
+    visuals.selection.bg_fill = p.verdigris.linear_multiply(0.35);
     visuals.selection.stroke = Stroke::new(1.0, p.verdigris);
     visuals.widgets.noninteractive.bg_fill = p.ink_850;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.edge);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.paper);
     visuals.widgets.inactive.bg_fill = p.ink_850;
-    visuals.widgets.inactive.weak_bg_fill = p.ink_850;
-    visuals.widgets.hovered.bg_fill = p.ink_850.linear_multiply(1.3);
-    visuals.widgets.active.bg_fill = p.verdigris.linear_multiply(0.5);
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.ghost.linear_multiply(0.5));
-    let radius = CornerRadius::same(4);
+    visuals.widgets.inactive.weak_bg_fill = p.key_face;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.edge);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, p.paper);
+    visuals.widgets.hovered.bg_fill = p.verdigris.linear_multiply(0.18);
+    visuals.widgets.hovered.weak_bg_fill = p.verdigris.linear_multiply(0.14);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, p.verdigris);
+    visuals.widgets.active.bg_fill = p.verdigris.linear_multiply(0.4);
+    visuals.widgets.active.weak_bg_fill = p.verdigris.linear_multiply(0.3);
+    let radius = CornerRadius::same(6);
     visuals.widgets.noninteractive.corner_radius = radius;
     visuals.widgets.inactive.corner_radius = radius;
     visuals.widgets.hovered.corner_radius = radius;
     visuals.widgets.active.corner_radius = radius;
-    visuals.window_corner_radius = CornerRadius::same(8);
+    visuals.window_corner_radius = CornerRadius::same(10);
     ctx.all_styles_mut(|style| {
         style.visuals = visuals.clone();
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.button_padding = egui::vec2(10.0, 6.0);
+        style.spacing.button_padding = egui::vec2(12.0, 7.0);
+        // A slightly larger, calmer type scale.
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, ui_font(14.5));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, ui_font(14.5));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Small, ui_font(11.5));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, ui_font(22.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Monospace, mono_font(14.0));
     });
 }
 
-/// Install embedded fonts if any are staged under assets/fonts, otherwise keep egui's
-/// defaults (which still render the identity via palette + sizing). Fonts are optional so
-/// the repo stays self-contained without shipping large binaries we lack licenses for.
-pub fn install_fonts(ctx: &egui::Context) {
-    // No fonts are bundled by default (see NOTICE / DECISIONS). If a future build adds
-    // .ttf/.otf under assets/fonts and wires them here, record the license in NOTICE.
-    let _ = ctx;
+/// A centered content column: everything on screen lives on this grid.
+pub fn centered_column<R>(
+    ui: &mut egui::Ui,
+    max_w: f32,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let w = ui.available_width().min(max_w);
+    let pad = ((ui.available_width() - w) / 2.0).max(0.0);
+    let mut result = None;
+    ui.horizontal(|ui| {
+        ui.add_space(pad);
+        ui.vertical(|ui| {
+            ui.set_width(w);
+            result = Some(add(ui));
+        });
+    });
+    result.unwrap()
+}
+
+/// A paper card frame sitting on the ground.
+pub fn card(p: &Palette) -> egui::Frame {
+    egui::Frame::new()
+        .fill(p.ink_850)
+        .stroke(Stroke::new(1.0, p.edge))
+        .corner_radius(CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(18, 14))
 }

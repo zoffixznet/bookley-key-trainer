@@ -1,32 +1,41 @@
-//! The on-screen letterpress keyboard widget. Highlights the next key by physical position
-//! (Guide mode) with a steady verdigris ring, and flashes just-pressed physical keys
-//! (Feedback mode) with a fading brass ink-stamp. Hidden mode draws nothing.
+//! The on-screen keyboard widget: a real full-size board drawn as physical keycaps.
+//! Guide mode rings the next key (and the Shift keys when the target needs Shift) in
+//! verdigris; Feedback mode flashes just-pressed keys with a fading brass ink-stamp;
+//! Hidden mode draws nothing.
+//!
+//! Caps read as physical keys: neutral face, subtle top highlight, a darker bottom lip,
+//! and the finger zone shown as a small accent bar on the lip (not a full-face tint).
 
 use std::collections::HashMap;
 
 use egui::{Align2, Color32, CornerRadius, FontId, Key, Rect, Sense, Stroke, StrokeKind, Vec2};
 
 use crate::core::config::KeyboardMode;
-use crate::core::keys;
+use crate::core::keys::{self, CapId, Slot};
 use crate::ui::theme::Palette;
 
 /// Tracks recently-pressed keys for the Feedback-mode flash. Each entry stores the time it
 /// was pressed; the widget animates a fade from there.
 #[derive(Default)]
 pub struct FlashState {
-    pressed_at: HashMap<Key, f64>,
+    pressed_at: HashMap<CapId, f64>,
 }
 
 impl FlashState {
     pub fn press(&mut self, key: Key, now: f64) {
-        self.pressed_at.insert(key, now);
+        self.pressed_at.insert(CapId::K(key), now);
+    }
+    /// Flash both Shift caps (egui reports the modifier, not which side).
+    pub fn press_shift(&mut self, now: f64) {
+        self.pressed_at.insert(CapId::ShiftL, now);
+        self.pressed_at.insert(CapId::ShiftR, now);
     }
     /// Drop entries older than the fade window to keep the map small.
     pub fn prune(&mut self, now: f64, fade: f64) {
         self.pressed_at.retain(|_, t| now - *t < fade);
     }
-    fn intensity(&self, key: Key, now: f64, fade: f64) -> f32 {
-        match self.pressed_at.get(&key) {
+    fn intensity(&self, id: CapId, now: f64, fade: f64) -> f32 {
+        match self.pressed_at.get(&id) {
             Some(t) => {
                 let age = (now - *t).max(0.0);
                 (1.0 - (age / fade)).clamp(0.0, 1.0) as f32
@@ -41,61 +50,76 @@ impl FlashState {
 
 const FADE_SECS: f64 = 0.45;
 
-/// Draw the keyboard. `next_key` is the physical key to ring in Guide mode.
-/// Returns the total height used (0 in Hidden mode).
+/// Draw the keyboard. `next_key` is the physical key to ring in Guide mode; when
+/// `needs_shift` is set, the Shift caps are ringed with it. Returns the height used.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     ui: &mut egui::Ui,
     palette: &Palette,
     mode: KeyboardMode,
     next_key: Option<Key>,
+    needs_shift: bool,
     flash: &FlashState,
     reduced_motion: bool,
     now: f64,
+    show_numpad: bool,
 ) -> f32 {
     if mode == KeyboardMode::Hidden {
         return 0.0;
     }
 
-    let layout = keys::layout();
-    let avail_w = ui.available_width().min(1100.0);
-    // Compute unit size from the widest row.
-    let max_units: f32 = layout
-        .iter()
-        .map(|row| row.iter().map(|c| c.width).sum::<f32>())
-        .fold(0.0, f32::max);
-    let gap = 4.0;
-    let n_max_keys = layout.iter().map(|r| r.len()).max().unwrap_or(1) as f32;
-    let unit = ((avail_w - gap * (n_max_keys + 1.0)) / max_units).clamp(20.0, 46.0);
-    let key_h = (unit * 1.05).clamp(22.0, 44.0);
+    let board = keys::board(show_numpad);
+    let avail_w = ui.available_width();
+    let gap = 5.0;
+    // Unit size: fill the available width up to a comfortable cap size.
+    let unit = ((avail_w - gap) / board.units_wide - gap).clamp(18.0, 52.0);
+    let key_h = unit.clamp(20.0, 48.0);
     let row_h = key_h + gap;
-    let total_h = row_h * layout.len() as f32 + gap;
+    // The F-row gets a little extra breathing room below it, like a real board.
+    let f_row_extra = gap * 1.5;
+    let total_h = row_h * board.rows.len() as f32 + f_row_extra + gap;
+    let board_w = board.units_wide * (unit + gap) + gap;
 
     let (rect, _resp) = ui.allocate_exact_size(Vec2::new(avail_w, total_h), Sense::hover());
-    let painter = ui.painter_at(rect);
+    let painter = ui.painter_at(rect.expand(4.0));
+    let left = rect.left() + (avail_w - board_w).max(0.0) / 2.0;
 
-    let mut y = rect.top() + gap;
-    for row in &layout {
-        let row_units: f32 = row.iter().map(|c| c.width).sum();
-        let row_w = row_units * unit + gap * (row.len() as f32 + 1.0);
-        let mut x = rect.left() + (avail_w - row_w).max(0.0) / 2.0 + gap;
-        for cap in row {
-            let w = cap.width * unit;
-            let kr = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, key_h));
-            draw_cap(
-                &painter,
-                palette,
-                cap,
-                kr,
-                mode,
-                next_key,
-                flash,
-                reduced_motion,
-                now,
-            );
-            x += w + gap;
+    let mut y = rect.top();
+    for (ri, row) in board.rows.iter().enumerate() {
+        let mut x = left + gap;
+        for slot in row {
+            match slot {
+                Slot::Gap(g) => {
+                    x += g * (unit + gap);
+                }
+                Slot::Cap(cap) => {
+                    let w = cap.width * (unit + gap) - gap;
+                    let h = if cap.height > 1.5 {
+                        key_h * 2.0 + gap
+                    } else {
+                        key_h
+                    };
+                    let kr = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, h));
+                    draw_cap(
+                        &painter,
+                        palette,
+                        cap,
+                        kr,
+                        mode,
+                        next_key,
+                        needs_shift,
+                        flash,
+                        reduced_motion,
+                        now,
+                    );
+                    x += cap.width * (unit + gap);
+                }
+            }
         }
         y += row_h;
+        if ri == 0 {
+            y += f_row_extra;
+        }
     }
     total_h
 }
@@ -103,47 +127,71 @@ pub fn draw(
 #[allow(clippy::too_many_arguments)]
 fn draw_cap(
     painter: &egui::Painter,
-    palette: &Palette,
+    p: &Palette,
     cap: &keys::KeyCap,
     rect: Rect,
     mode: KeyboardMode,
     next_key: Option<Key>,
+    needs_shift: bool,
     flash: &FlashState,
     reduced_motion: bool,
     now: f64,
 ) {
     let radius = CornerRadius::same(5);
-    let zone = cap.finger.zone();
-    let base = palette.finger[zone];
+    let is_next = mode == KeyboardMode::Guide
+        && (next_key.map(CapId::K) == Some(cap.id)
+            || (needs_shift && (cap.id == CapId::ShiftL || cap.id == CapId::ShiftR)));
 
-    // Keycap body with a slight top-highlight to read as a mechanical cap.
-    painter.rect_filled(rect, radius, base);
-    let top = Rect::from_min_max(
-        rect.min,
-        egui::pos2(rect.max.x, rect.min.y + rect.height() * 0.42),
+    // Drop shadow / bottom lip: a darker rect nudged down, so the cap reads as raised.
+    let lip = Rect::from_min_max(
+        rect.min + Vec2::new(0.0, 2.0),
+        rect.max + Vec2::new(0.0, 2.5),
     );
-    painter.rect_filled(top, radius, base.linear_multiply(1.18));
+    painter.rect_filled(lip, radius, p.key_lip);
 
+    // Cap face.
+    let mut face = p.key_face;
     // Feedback flash: fading brass ink-stamp on just-pressed keys.
-    if mode == KeyboardMode::Feedback && !reduced_motion {
-        let i = flash.intensity(cap.key, now, FADE_SECS);
+    if mode == KeyboardMode::Feedback {
+        let i = if reduced_motion {
+            if flash.intensity(cap.id, now, 0.15) > 0.0 {
+                0.85
+            } else {
+                0.0
+            }
+        } else {
+            flash.intensity(cap.id, now, FADE_SECS)
+        };
         if i > 0.0 {
-            let stamp = lerp_color(base, palette.brass, i * 0.9);
-            painter.rect_filled(rect, radius, stamp);
-        }
-    } else if mode == KeyboardMode::Feedback && reduced_motion {
-        // Reduced motion: a static brass tint if pressed very recently, no animation.
-        if flash.intensity(cap.key, now, 0.12) > 0.0 {
-            painter.rect_filled(rect, radius, palette.brass.linear_multiply(0.7));
+            face = lerp_color(face, p.brass, i * 0.85);
         }
     }
+    if is_next {
+        face = lerp_color(face, p.verdigris, 0.22);
+    }
+    painter.rect_filled(rect, radius, face);
 
-    // Guide next-key ring.
-    let is_next = mode == KeyboardMode::Guide && next_key == Some(cap.key);
+    // Subtle top highlight so the cap reads dished/convex.
+    let top = Rect::from_min_max(
+        rect.min + Vec2::new(1.5, 1.5),
+        egui::pos2(rect.max.x - 1.5, rect.min.y + rect.height() * 0.45),
+    );
+    painter.rect_filled(top, CornerRadius::same(4), p.key_top);
+
+    // Finger-zone accent: a thin bar sitting on the cap's lower lip.
+    let zone = p.finger[cap.finger.zone()];
+    let bar_w = (rect.width() * 0.44).clamp(6.0, 26.0);
+    let bar = Rect::from_center_size(
+        egui::pos2(rect.center().x, rect.max.y - 3.5),
+        Vec2::new(bar_w, 2.5),
+    );
+    painter.rect_filled(bar, CornerRadius::same(1), zone);
+
+    // Edge stroke; the guide ring is stronger and verdigris.
     let (stroke_w, stroke_c) = if is_next {
-        (2.5, palette.verdigris)
+        (2.0, p.verdigris)
     } else {
-        (1.0, palette.ghost.linear_multiply(0.5))
+        (1.0, p.key_edge)
     };
     painter.rect_stroke(
         rect,
@@ -153,12 +201,12 @@ fn draw_cap(
     );
 
     // Label.
-    let fs = (rect.height() * 0.42).clamp(9.0, 16.0);
-    let label_color = if is_next {
-        palette.verdigris
+    let fs = if cap.label.chars().count() > 2 {
+        (rect.height() * 0.30).clamp(8.0, 12.0)
     } else {
-        palette.paper
+        (rect.height() * 0.40).clamp(10.0, 16.0)
     };
+    let label_color = if is_next { p.verdigris } else { p.key_text };
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -168,14 +216,14 @@ fn draw_cap(
     );
 
     // Home-row bumps on F and J.
-    if cap.key == Key::F || cap.key == Key::J {
-        let bump_y = rect.max.y - 4.0;
+    if cap.id == CapId::K(Key::F) || cap.id == CapId::K(Key::J) {
+        let bump_y = rect.max.y - 7.0;
         painter.line_segment(
             [
-                egui::pos2(rect.center().x - 5.0, bump_y),
-                egui::pos2(rect.center().x + 5.0, bump_y),
+                egui::pos2(rect.center().x - 4.0, bump_y),
+                egui::pos2(rect.center().x + 4.0, bump_y),
             ],
-            Stroke::new(1.5, palette.paper.linear_multiply(0.7)),
+            Stroke::new(2.0, p.key_text.linear_multiply(0.65)),
         );
     }
 }

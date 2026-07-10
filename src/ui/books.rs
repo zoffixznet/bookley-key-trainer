@@ -5,6 +5,8 @@
 use crate::core::book::prompt;
 use crate::core::config::ContentMode;
 use crate::ui::app::{App, Screen};
+use crate::ui::stage::COLUMN_W;
+use crate::ui::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
@@ -16,131 +18,140 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
+        theme::centered_column(ui, COLUMN_W, |ui| {
+            ui.add_space(22.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("Your books")
+                        .font(theme::display_font(26.0))
+                        .color(p.brass),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("New book").clicked() {
+                        app.book_ui.show_create = true;
+                        app.book_ui.new_language = app.config.default_language.clone();
+                    }
+                });
+            });
+
+            // Claude banner: books and typing always work; generation needs Claude.
+            match &app.auth.check {
+                Some(check) if !check.is_connected() => {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                "Claude isn't connected yet; generating chapters needs it.",
+                            )
+                            .color(p.ghost),
+                        );
+                        if ui.button("Connect Claude").clicked() {
+                            app.screen = Screen::Connect;
+                        }
+                    });
+                }
+                _ => {}
+            }
+
+            if let Some(status) = &app.book_ui.status {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(status).color(p.verdigris));
+            }
+
+            ui.add_space(10.0);
+
+            if app.book_ui.show_create {
+                create_dialog(app, ui);
+                ui.add_space(12.0);
+            }
+
+            // If a book is open, show its detail (chapters, continue, rewrite, export).
+            if let Some(slug) = app.book_ui.open_slug.clone() {
+                book_detail(app, ui, &slug);
+                ui.add_space(16.0);
+            }
+
+            // The shelf.
+            let books = app.store.list();
+            if books.is_empty() && !app.book_ui.show_create {
+                ui.add_space(24.0);
+                ui.label(
+                    egui::RichText::new(
+                        "No books yet. Create one, then type its chapters to write it.",
+                    )
+                    .color(p.ghost),
+                );
+            }
+            ui.horizontal_wrapped(|ui| {
+                for book in &books {
+                    shelf_card(app, ui, book);
+                }
+            });
+            ui.add_space(24.0);
+        });
+    });
+}
+
+/// One book on the shelf: a spine-like card with title, language, progress, actions.
+fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store::Book) {
+    let p = app.palette();
+    let title = crate::core::book::store::display_title(&book.meta);
+    let done = book.meta.chapters.iter().filter(|c| c.done).count();
+    let total = book.meta.chapters.len();
+    theme::card(&p).show(ui, |ui| {
+        ui.vertical(|ui| {
+            ui.set_width(268.0);
+            ui.set_min_height(112.0);
+            // Brass spine accent along the top of the card.
+            let (rule, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rule, egui::CornerRadius::same(2), p.brass);
+            ui.add_space(6.0);
             ui.label(
-                egui::RichText::new("Your books")
-                    .color(p.brass)
-                    .size(24.0)
-                    .strong(),
+                egui::RichText::new(&title)
+                    .font(theme::display_font(17.0))
+                    .color(p.paper),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("New book").clicked() {
-                    app.book_ui.show_create = true;
-                    app.book_ui.new_language = app.config.default_language.clone();
+            ui.add_space(2.0);
+            let mut meta = format!("{done}/{total} chapters typed");
+            if !book.meta.language.is_empty() {
+                meta = format!("{}  \u{00B7}  {meta}", book.meta.language);
+            }
+            if book.meta.concluded {
+                meta.push_str("  \u{00B7}  finished");
+            }
+            ui.label(egui::RichText::new(meta).color(p.ghost).size(12.0));
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.button("Open").clicked() {
+                    app.book_ui.open_slug = Some(book.meta.slug.clone());
+                    app.book_ui.status = None;
+                }
+                if app.book_ui.confirm_delete.as_deref() == Some(&book.meta.slug) {
+                    if ui
+                        .button(egui::RichText::new("Really delete").color(p.ribbon))
+                        .clicked()
+                    {
+                        if let Err(e) = app.store.delete(&book.meta.slug) {
+                            app.book_ui.status = Some(format!("Could not delete the book: {e}"));
+                        }
+                        if app.book_ui.open_slug.as_deref() == Some(&book.meta.slug) {
+                            app.book_ui.open_slug = None;
+                        }
+                        app.book_ui.confirm_delete = None;
+                    }
+                    if ui.button("Keep").clicked() {
+                        app.book_ui.confirm_delete = None;
+                    }
+                } else if ui
+                    .button(egui::RichText::new("Delete").color(p.ghost))
+                    .clicked()
+                {
+                    app.book_ui.confirm_delete = Some(book.meta.slug.clone());
                 }
             });
         });
-
-        // Claude connection banner: books and typing always work; generation needs Claude.
-        match &app.auth.check {
-            Some(check) if !check.is_connected() => {
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "Claude isn't connected yet; generating chapters needs it.",
-                        )
-                        .color(p.ghost),
-                    );
-                    if ui.button("Connect Claude").clicked() {
-                        app.screen = Screen::Connect;
-                    }
-                });
-            }
-            _ => {}
-        }
-
-        if let Some(status) = &app.book_ui.status {
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new(status).color(p.verdigris));
-        }
-
-        ui.add_space(8.0);
-
-        if app.book_ui.show_create {
-            create_dialog(app, ui);
-            ui.separator();
-        }
-
-        // If a book is open, show its detail (chapters, continue, rewrite, export).
-        if let Some(slug) = app.book_ui.open_slug.clone() {
-            book_detail(app, ui, &slug);
-            ui.separator();
-        }
-
-        // The shelf.
-        let books = app.store.list();
-        if books.is_empty() && !app.book_ui.show_create {
-            ui.add_space(20.0);
-            ui.label(
-                egui::RichText::new(
-                    "No books yet. Create one, then type its chapters to write it.",
-                )
-                .color(p.ghost),
-            );
-        }
-        ui.horizontal_wrapped(|ui| {
-            for book in &books {
-                let title = crate::core::book::store::display_title(&book.meta);
-                let done = book.meta.chapters.iter().filter(|c| c.done).count();
-                let total = book.meta.chapters.len();
-                let group = ui.group(|ui| {
-                    ui.set_width(220.0);
-                    ui.label(
-                        egui::RichText::new(&title)
-                            .color(p.brass)
-                            .size(16.0)
-                            .strong(),
-                    );
-                    ui.label(
-                        egui::RichText::new(if book.meta.language.is_empty() {
-                            "".to_string()
-                        } else {
-                            book.meta.language.clone()
-                        })
-                        .color(p.ghost)
-                        .size(12.0),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!("{done}/{total} chapters typed"))
-                            .color(p.ghost)
-                            .size(12.0),
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Open").clicked() {
-                            app.book_ui.open_slug = Some(book.meta.slug.clone());
-                            app.book_ui.status = None;
-                        }
-                        if app.book_ui.confirm_delete.as_deref() == Some(&book.meta.slug) {
-                            if ui
-                                .button(egui::RichText::new("Really delete").color(p.ribbon))
-                                .clicked()
-                            {
-                                if let Err(e) = app.store.delete(&book.meta.slug) {
-                                    app.book_ui.status =
-                                        Some(format!("Could not delete the book: {e}"));
-                                }
-                                if app.book_ui.open_slug.as_deref() == Some(&book.meta.slug) {
-                                    app.book_ui.open_slug = None;
-                                }
-                                app.book_ui.confirm_delete = None;
-                            }
-                            if ui.button("Keep").clicked() {
-                                app.book_ui.confirm_delete = None;
-                            }
-                        } else if ui
-                            .button(egui::RichText::new("Delete").color(p.ghost))
-                            .clicked()
-                        {
-                            app.book_ui.confirm_delete = Some(book.meta.slug.clone());
-                        }
-                    });
-                });
-                let _ = group;
-            }
-        });
-        ui.add_space(20.0);
     });
 }
 
@@ -402,10 +413,14 @@ still possible."
 
 fn writing_view(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
-    ui.add_space(30.0);
+    ui.add_space(36.0);
     let mut cancel_clicked = false;
     ui.vertical_centered(|ui| {
-        ui.label(egui::RichText::new("Writing...").color(p.brass).size(22.0));
+        ui.label(
+            egui::RichText::new("Writing...")
+                .font(theme::display_font(26.0))
+                .color(p.brass),
+        );
         ui.add_space(4.0);
         if let Some(gen) = &app.gen {
             let secs = gen.started.elapsed().as_secs();
@@ -424,21 +439,26 @@ fn writing_view(app: &mut App, ui: &mut egui::Ui) {
         app.cancel_generation();
     }
     ui.add_space(12.0);
-    egui::ScrollArea::vertical()
-        .max_height(360.0)
-        .stick_to_bottom(true)
-        .show(ui, |ui| {
-            if let Some(gen) = &app.gen {
-                // Strip the markers from the live view for readability.
-                let shown = gen
-                    .live_text
-                    .replace("===TITLE===", "")
-                    .replace("===CHAPTER===", "")
-                    .replace("===BIBLE===", "\n\n[continuity notes...]")
-                    .replace("===END===", "");
-                ui.label(egui::RichText::new(shown).color(p.paper).monospace());
-            }
+    theme::centered_column(ui, 760.0, |ui| {
+        theme::card(&p).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical()
+                .max_height(380.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    if let Some(gen) = &app.gen {
+                        // Strip the markers from the live view for readability.
+                        let shown = gen
+                            .live_text
+                            .replace("===TITLE===", "")
+                            .replace("===CHAPTER===", "")
+                            .replace("===BIBLE===", "\n\n[continuity notes...]")
+                            .replace("===END===", "");
+                        ui.label(egui::RichText::new(shown).color(p.paper).size(14.5));
+                    }
+                });
         });
+    });
     ui.ctx().request_repaint();
 }
 

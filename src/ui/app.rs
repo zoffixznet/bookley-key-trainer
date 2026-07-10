@@ -471,10 +471,16 @@ impl App {
                     physical_key,
                     pressed,
                     repeat,
+                    modifiers,
                     ..
                 } => {
                     if !pressed {
                         continue;
+                    }
+                    // Feedback flash for the Shift caps (egui reports the modifier state,
+                    // not the modifier keypress itself).
+                    if modifiers.shift {
+                        self.flash.press_shift(now);
                     }
                     // Dev shortcuts.
                     if self.dev_mode {
@@ -875,73 +881,96 @@ impl eframe::App for App {
     }
 }
 
-/// The slim top app bar: wordmark, content-mode tabs, keyboard-mode switch, nav, DEV badge.
+/// The top app bar: serif wordmark lockup, segmented content-mode tabs, and a tidy right
+/// cluster (keyboard mode, Books, Settings).
 fn top_bar(app: &mut App, ui: &mut egui::Ui) {
     let p = app.palette();
-    egui::Panel::top("top_bar").show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("Bookley")
-                    .color(p.brass)
-                    .size(20.0)
-                    .strong(),
-            );
-            ui.label(egui::RichText::new("Key Trainer").color(p.ghost).size(13.0));
-            if app.dev_mode {
+    egui::Panel::top("top_bar")
+        .frame(
+            egui::Frame::new()
+                .fill(p.ink_850)
+                .inner_margin(egui::Margin::symmetric(16, 10)),
+        )
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                // Wordmark lockup: literary serif + quiet descriptor.
                 ui.label(
-                    egui::RichText::new(" DEV ")
-                        .color(p.ink_950)
-                        .background_color(p.ribbon)
-                        .strong(),
+                    egui::RichText::new("Bookley")
+                        .font(theme::display_font(24.0))
+                        .color(p.brass),
                 );
-            }
-            ui.add_space(12.0);
-
-            // Content-mode tabs.
-            for mode in ContentMode::ALL {
-                let selected = app.config.content_mode == mode;
-                let mut text = egui::RichText::new(mode.label());
-                if selected {
-                    text = text.color(p.verdigris).strong();
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("KEY TRAINER")
+                        .color(p.ghost)
+                        .size(10.5)
+                        .extra_letter_spacing(1.6),
+                );
+                if app.dev_mode {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new(" DEV ")
+                            .color(p.ink_850)
+                            .background_color(p.ribbon)
+                            .size(11.0)
+                            .strong(),
+                    );
                 }
-                if ui.selectable_label(selected, text).clicked() && !selected {
-                    app.config.content_mode = mode;
-                    app.save_config();
-                    if mode == ContentMode::Book {
-                        app.screen = Screen::Books;
-                    } else if mode == ContentMode::Paste {
-                        // Paste needs input first; show the stage which prompts for it.
-                        app.session = None;
-                        app.screen = Screen::Typing;
+                ui.add_space(22.0);
+
+                // Content-mode tabs.
+                for mode in ContentMode::ALL {
+                    let selected = app.config.content_mode == mode;
+                    let text = if selected {
+                        egui::RichText::new(mode.label())
+                            .color(p.verdigris)
+                            .strong()
                     } else {
-                        app.start_session();
-                    }
-                }
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Settings").clicked() {
-                    app.screen = Screen::Settings;
-                }
-                if ui.button("Books").clicked() {
-                    app.screen = Screen::Books;
-                }
-                // Keyboard-mode switch.
-                for km in KeyboardMode::ALL.iter().rev() {
-                    let selected = app.config.keyboard_mode == *km;
-                    let mut text = egui::RichText::new(km.label());
-                    if selected {
-                        text = text.color(p.verdigris).strong();
-                    }
-                    if ui.selectable_label(selected, text).clicked() {
-                        app.config.keyboard_mode = *km;
+                        egui::RichText::new(mode.label()).color(p.paper)
+                    };
+                    if ui.selectable_label(selected, text).clicked() && !selected {
+                        app.config.content_mode = mode;
                         app.save_config();
+                        if mode == ContentMode::Book {
+                            app.screen = Screen::Books;
+                        } else if mode == ContentMode::Paste {
+                            // Paste needs input first; show the stage which prompts for it.
+                            app.session = None;
+                            app.screen = Screen::Typing;
+                        } else {
+                            app.start_session();
+                        }
                     }
                 }
-                ui.label(egui::RichText::new("Keyboard:").color(p.ghost).size(12.0));
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Settings").clicked() {
+                        app.screen = Screen::Settings;
+                    }
+                    if ui.button("Books").clicked() {
+                        app.screen = Screen::Books;
+                    }
+                    ui.add_space(10.0);
+                    // Keyboard-mode switch.
+                    for km in KeyboardMode::ALL.iter().rev() {
+                        let selected = app.config.keyboard_mode == *km;
+                        let text = if selected {
+                            egui::RichText::new(km.label()).color(p.verdigris).strong()
+                        } else {
+                            egui::RichText::new(km.label()).color(p.paper)
+                        };
+                        if ui.selectable_label(selected, text).clicked() {
+                            app.config.keyboard_mode = *km;
+                            app.save_config();
+                        }
+                    }
+                    ui.label(
+                        egui::RichText::new("KEYBOARD")
+                            .color(p.ghost)
+                            .size(10.0)
+                            .extra_letter_spacing(1.2),
+                    );
+                });
             });
         });
-        ui.add_space(2.0);
-    });
 }

@@ -5,17 +5,30 @@
 
 use crate::core::claude_auth::AuthCheck;
 use crate::ui::app::{App, ConnectUiState, Screen};
+use crate::ui::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    let p = app.palette();
-
     egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(16.0);
+        theme::centered_column(ui, 680.0, |ui| {
+            connect_body(app, ui);
+        });
+    });
+
+    // Keep polling while a flow is active.
+    if app.auth.flow.is_some() {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(200));
+    }
+}
+
+fn connect_body(app: &mut App, ui: &mut egui::Ui) {
+    let p = app.palette();
+    {
+        ui.add_space(22.0);
         ui.label(
             egui::RichText::new("Connect Claude")
-                .color(p.brass)
-                .size(24.0)
-                .strong(),
+                .font(theme::display_font(26.0))
+                .color(p.brass),
         );
         ui.label(
             egui::RichText::new(
@@ -114,12 +127,6 @@ Paste it below.",
             }
         }
         ui.add_space(20.0);
-    });
-
-    // Keep polling while a flow is active.
-    if app.auth.flow.is_some() {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(200));
     }
 }
 

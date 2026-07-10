@@ -1,10 +1,12 @@
-//! Keyboard model: physical keys, layout rows, finger zones, dev keys, and the mapping
-//! between a target character / expected key and the physical position to highlight.
+//! Keyboard model: a real full-size (104-key) board with proper geometry, finger zones,
+//! dev keys, and the mapping between a target character and the physical position to
+//! highlight.
 //!
 //! We highlight the on-screen keyboard by *physical* position (egui `physical_key`) so a
 //! trainer teaches muscle memory regardless of the active keymap. Character targets map to
 //! the physical key that produces them on a standard US QWERTY layout (which is the layout
-//! we draw), plus a `shift` flag when the character needs Shift.
+//! we draw), plus a `shift` flag when the character needs Shift; Guide mode also
+//! highlights the Shift keys for shifted targets.
 
 use egui::Key;
 
@@ -40,159 +42,317 @@ impl Finger {
     }
 }
 
+/// Identity of a drawn keycap. `K(Key)` caps are matchable against egui `physical_key`
+/// events and can be typing targets; the rest (modifiers, numpad, PrtSc cluster) are
+/// drawn for realism, flashed where possible, but never targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CapId {
+    K(Key),
+    ShiftL,
+    ShiftR,
+    Caps,
+    CtrlL,
+    CtrlR,
+    AltL,
+    AltR,
+    SuperL,
+    SuperR,
+    Menu,
+    PrtSc,
+    ScrLk,
+    PauseBrk,
+    NumLock,
+    NpDiv,
+    NpMul,
+    NpSub,
+    NpAdd,
+    NpEnter,
+    NpDot,
+    Np(u8),
+}
+
 /// A physical keyboard key we can draw and highlight.
 #[derive(Debug, Clone)]
 pub struct KeyCap {
-    /// egui physical key this cap corresponds to (for highlight-by-physical-position).
-    pub key: Key,
+    pub id: CapId,
     /// Label drawn on the cap (unshifted).
     pub label: &'static str,
     /// Shifted label, if the key produces a different glyph with Shift.
     pub shifted: Option<&'static str>,
-    /// Relative width in "units" (1.0 = a normal letter key).
+    /// Width in "units" (1.0 = a normal letter key).
     pub width: f32,
+    /// Height in row units (2.0 = spans two rows, e.g. numpad + / Enter).
+    pub height: f32,
     /// Which finger this key belongs to.
     pub finger: Finger,
 }
 
-impl KeyCap {
-    const fn new(
-        key: Key,
-        label: &'static str,
-        shifted: Option<&'static str>,
-        width: f32,
-        finger: Finger,
-    ) -> Self {
-        KeyCap {
-            key,
-            label,
-            shifted,
-            width,
-            finger,
-        }
-    }
+/// One slot in a board row: a cap or a horizontal gap (in units).
+#[derive(Debug, Clone)]
+pub enum Slot {
+    Cap(KeyCap),
+    Gap(f32),
+}
+
+/// The whole drawn board.
+#[derive(Debug, Clone)]
+pub struct Board {
+    pub rows: Vec<Vec<Slot>>,
+    pub units_wide: f32,
 }
 
 use Finger::*;
 
-/// The full keyboard layout, row by row, as we draw it. US QWERTY plus a nav cluster and a
-/// function-key row so Random mode can exercise the whole board.
-pub fn layout() -> Vec<Vec<KeyCap>> {
-    vec![
-        // Function row
-        vec![
-            KeyCap::new(Key::Escape, "Esc", None, 1.3, LeftPinky),
-            KeyCap::new(Key::F1, "F1", None, 1.0, LeftPinky),
-            KeyCap::new(Key::F2, "F2", None, 1.0, LeftRing),
-            KeyCap::new(Key::F3, "F3", None, 1.0, LeftMiddle),
-            KeyCap::new(Key::F4, "F4", None, 1.0, LeftIndex),
-            KeyCap::new(Key::F5, "F5", None, 1.0, LeftIndex),
-            KeyCap::new(Key::F6, "F6", None, 1.0, RightIndex),
-            KeyCap::new(Key::F7, "F7", None, 1.0, RightIndex),
-            KeyCap::new(Key::F8, "F8", None, 1.0, RightMiddle),
-            KeyCap::new(Key::F9, "F9", None, 1.0, RightRing),
-            KeyCap::new(Key::F10, "F10", None, 1.0, RightPinky),
-            KeyCap::new(Key::F11, "F11", None, 1.0, RightPinky),
-            KeyCap::new(Key::F12, "F12", None, 1.0, RightPinky),
-        ],
-        // Number row
-        vec![
-            KeyCap::new(Key::Backtick, "`", Some("~"), 1.0, LeftPinky),
-            KeyCap::new(Key::Num1, "1", Some("!"), 1.0, LeftPinky),
-            KeyCap::new(Key::Num2, "2", Some("@"), 1.0, LeftRing),
-            KeyCap::new(Key::Num3, "3", Some("#"), 1.0, LeftMiddle),
-            KeyCap::new(Key::Num4, "4", Some("$"), 1.0, LeftIndex),
-            KeyCap::new(Key::Num5, "5", Some("%"), 1.0, LeftIndex),
-            KeyCap::new(Key::Num6, "6", Some("^"), 1.0, RightIndex),
-            KeyCap::new(Key::Num7, "7", Some("&"), 1.0, RightIndex),
-            KeyCap::new(Key::Num8, "8", Some("*"), 1.0, RightMiddle),
-            KeyCap::new(Key::Num9, "9", Some("("), 1.0, RightRing),
-            KeyCap::new(Key::Num0, "0", Some(")"), 1.0, RightPinky),
-            KeyCap::new(Key::Minus, "-", Some("_"), 1.0, RightPinky),
-            KeyCap::new(Key::Equals, "=", Some("+"), 1.0, RightPinky),
-            KeyCap::new(Key::Backspace, "Bksp", None, 1.8, RightPinky),
-        ],
-        // Top letter row
-        vec![
-            KeyCap::new(Key::Tab, "Tab", None, 1.5, LeftPinky),
-            KeyCap::new(Key::Q, "Q", None, 1.0, LeftPinky),
-            KeyCap::new(Key::W, "W", None, 1.0, LeftRing),
-            KeyCap::new(Key::E, "E", None, 1.0, LeftMiddle),
-            KeyCap::new(Key::R, "R", None, 1.0, LeftIndex),
-            KeyCap::new(Key::T, "T", None, 1.0, LeftIndex),
-            KeyCap::new(Key::Y, "Y", None, 1.0, RightIndex),
-            KeyCap::new(Key::U, "U", None, 1.0, RightIndex),
-            KeyCap::new(Key::I, "I", None, 1.0, RightMiddle),
-            KeyCap::new(Key::O, "O", None, 1.0, RightRing),
-            KeyCap::new(Key::P, "P", None, 1.0, RightPinky),
-            KeyCap::new(Key::OpenBracket, "[", Some("{"), 1.0, RightPinky),
-            KeyCap::new(Key::CloseBracket, "]", Some("}"), 1.0, RightPinky),
-            KeyCap::new(Key::Backslash, "\\", Some("|"), 1.5, RightPinky),
-        ],
-        // Home row (CapsLock is not a typing target and egui has no CapsLock variant, so
-        // we start the drawn row at A; the home-row bumps live on F and J.)
-        vec![
-            KeyCap::new(Key::A, "A", None, 1.0, LeftPinky),
-            KeyCap::new(Key::S, "S", None, 1.0, LeftRing),
-            KeyCap::new(Key::D, "D", None, 1.0, LeftMiddle),
-            KeyCap::new(Key::F, "F", None, 1.0, LeftIndex),
-            KeyCap::new(Key::G, "G", None, 1.0, LeftIndex),
-            KeyCap::new(Key::H, "H", None, 1.0, RightIndex),
-            KeyCap::new(Key::J, "J", None, 1.0, RightIndex),
-            KeyCap::new(Key::K, "K", None, 1.0, RightMiddle),
-            KeyCap::new(Key::L, "L", None, 1.0, RightRing),
-            KeyCap::new(Key::Semicolon, ";", Some(":"), 1.0, RightPinky),
-            KeyCap::new(Key::Quote, "'", Some("\""), 1.0, RightPinky),
-            KeyCap::new(Key::Enter, "Enter", None, 2.0, RightPinky),
-        ],
-        // Bottom letter row
-        vec![
-            KeyCap::new(Key::Comma, ",", Some("<"), 1.0, RightMiddle), // placeholder replaced below
-        ],
-        // Space row
-        vec![KeyCap::new(Key::Space, "Space", None, 6.0, LeftThumb)],
-        // Navigation cluster / arrows (drawn as a compact block)
-        vec![
-            KeyCap::new(Key::Insert, "Ins", None, 1.0, RightPinky),
-            KeyCap::new(Key::Home, "Home", None, 1.0, RightPinky),
-            KeyCap::new(Key::PageUp, "PgUp", None, 1.0, RightPinky),
-            KeyCap::new(Key::Delete, "Del", None, 1.0, RightPinky),
-            KeyCap::new(Key::End, "End", None, 1.0, RightPinky),
-            KeyCap::new(Key::PageDown, "PgDn", None, 1.0, RightPinky),
-            KeyCap::new(Key::ArrowLeft, "\u{2190}", None, 1.0, RightIndex),
-            KeyCap::new(Key::ArrowDown, "\u{2193}", None, 1.0, RightMiddle),
-            KeyCap::new(Key::ArrowUp, "\u{2191}", None, 1.0, RightMiddle),
-            KeyCap::new(Key::ArrowRight, "\u{2192}", None, 1.0, RightRing),
-        ],
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(i, row)| if i == 4 { bottom_row() } else { row })
-    .collect()
+fn cap(id: CapId, label: &'static str, w: f32, finger: Finger) -> Slot {
+    Slot::Cap(KeyCap {
+        id,
+        label,
+        shifted: None,
+        width: w,
+        height: 1.0,
+        finger,
+    })
 }
 
-fn bottom_row() -> Vec<KeyCap> {
-    vec![
-        KeyCap::new(Key::Z, "Z", None, 1.0, LeftPinky),
-        KeyCap::new(Key::X, "X", None, 1.0, LeftRing),
-        KeyCap::new(Key::C, "C", None, 1.0, LeftMiddle),
-        KeyCap::new(Key::V, "V", None, 1.0, LeftIndex),
-        KeyCap::new(Key::B, "B", None, 1.0, LeftIndex),
-        KeyCap::new(Key::N, "N", None, 1.0, RightIndex),
-        KeyCap::new(Key::M, "M", None, 1.0, RightIndex),
-        KeyCap::new(Key::Comma, ",", Some("<"), 1.0, RightMiddle),
-        KeyCap::new(Key::Period, ".", Some(">"), 1.0, RightRing),
-        KeyCap::new(Key::Slash, "/", Some("?"), 1.0, RightPinky),
-    ]
+fn cap_sh(id: CapId, label: &'static str, shifted: &'static str, finger: Finger) -> Slot {
+    Slot::Cap(KeyCap {
+        id,
+        label,
+        shifted: Some(shifted),
+        width: 1.0,
+        height: 1.0,
+        finger,
+    })
 }
 
-/// A flat list of every physical key in the layout (deduplicated), used by Random mode.
+fn tall(id: CapId, label: &'static str, finger: Finger) -> Slot {
+    Slot::Cap(KeyCap {
+        id,
+        label,
+        shifted: None,
+        width: 1.0,
+        height: 2.0,
+        finger,
+    })
+}
+
+fn k(key: Key, label: &'static str, w: f32, finger: Finger) -> Slot {
+    cap(CapId::K(key), label, w, finger)
+}
+
+fn k_sh(key: Key, label: &'static str, shifted: &'static str, finger: Finger) -> Slot {
+    cap_sh(CapId::K(key), label, shifted, finger)
+}
+
+fn gap(units: f32) -> Slot {
+    Slot::Gap(units)
+}
+
+/// Gutter between the main block, nav cluster, and numpad.
+const GUTTER: f32 = 0.5;
+
+/// Build the full-size board. The main block is 15u wide; the nav cluster 3u; the numpad
+/// 4u. `show_numpad` controls whether the numpad section is included.
+pub fn board(show_numpad: bool) -> Board {
+    use CapId::*;
+    use Key as EK;
+
+    let mut rows: Vec<Vec<Slot>> = Vec::new();
+
+    // Function row: Esc, 1u gap, F1-F4, 0.5 gap, F5-F8, 0.5 gap, F9-F12 (= 15u).
+    let mut r = vec![
+        k(EK::Escape, "Esc", 1.0, LeftPinky),
+        gap(1.0),
+        k(EK::F1, "F1", 1.0, LeftPinky),
+        k(EK::F2, "F2", 1.0, LeftRing),
+        k(EK::F3, "F3", 1.0, LeftMiddle),
+        k(EK::F4, "F4", 1.0, LeftIndex),
+        gap(0.5),
+        k(EK::F5, "F5", 1.0, LeftIndex),
+        k(EK::F6, "F6", 1.0, RightIndex),
+        k(EK::F7, "F7", 1.0, RightIndex),
+        k(EK::F8, "F8", 1.0, RightMiddle),
+        gap(0.5),
+        k(EK::F9, "F9", 1.0, RightRing),
+        k(EK::F10, "F10", 1.0, RightPinky),
+        k(EK::F11, "F11", 1.0, RightPinky),
+        k(EK::F12, "F12", 1.0, RightPinky),
+        gap(GUTTER),
+        cap(PrtSc, "PrtSc", 1.0, RightPinky),
+        cap(ScrLk, "ScrLk", 1.0, RightPinky),
+        cap(PauseBrk, "Pause", 1.0, RightPinky),
+    ];
+    if show_numpad {
+        r.push(gap(GUTTER + 4.0));
+    }
+    rows.push(r);
+
+    // Number row: 13 keys + 2u Backspace (= 15u).
+    let mut r = vec![
+        k_sh(EK::Backtick, "`", "~", LeftPinky),
+        k_sh(EK::Num1, "1", "!", LeftPinky),
+        k_sh(EK::Num2, "2", "@", LeftRing),
+        k_sh(EK::Num3, "3", "#", LeftMiddle),
+        k_sh(EK::Num4, "4", "$", LeftIndex),
+        k_sh(EK::Num5, "5", "%", LeftIndex),
+        k_sh(EK::Num6, "6", "^", RightIndex),
+        k_sh(EK::Num7, "7", "&", RightIndex),
+        k_sh(EK::Num8, "8", "*", RightMiddle),
+        k_sh(EK::Num9, "9", "(", RightRing),
+        k_sh(EK::Num0, "0", ")", RightPinky),
+        k_sh(EK::Minus, "-", "_", RightPinky),
+        k_sh(EK::Equals, "=", "+", RightPinky),
+        k(EK::Backspace, "Backspace", 2.0, RightPinky),
+        gap(GUTTER),
+        k(EK::Insert, "Ins", 1.0, RightPinky),
+        k(EK::Home, "Home", 1.0, RightPinky),
+        k(EK::PageUp, "PgUp", 1.0, RightPinky),
+    ];
+    if show_numpad {
+        r.extend([
+            gap(GUTTER),
+            cap(NumLock, "Num", 1.0, RightIndex),
+            cap(NpDiv, "/", 1.0, RightMiddle),
+            cap(NpMul, "*", 1.0, RightRing),
+            cap(NpSub, "-", 1.0, RightPinky),
+        ]);
+    }
+    rows.push(r);
+
+    // Top letter row: Tab 1.5 + 12 keys + 1.5 backslash (= 15u).
+    let mut r = vec![
+        k(EK::Tab, "Tab", 1.5, LeftPinky),
+        k(EK::Q, "Q", 1.0, LeftPinky),
+        k(EK::W, "W", 1.0, LeftRing),
+        k(EK::E, "E", 1.0, LeftMiddle),
+        k(EK::R, "R", 1.0, LeftIndex),
+        k(EK::T, "T", 1.0, LeftIndex),
+        k(EK::Y, "Y", 1.0, RightIndex),
+        k(EK::U, "U", 1.0, RightIndex),
+        k(EK::I, "I", 1.0, RightMiddle),
+        k(EK::O, "O", 1.0, RightRing),
+        k(EK::P, "P", 1.0, RightPinky),
+        k_sh(EK::OpenBracket, "[", "{", RightPinky),
+        k_sh(EK::CloseBracket, "]", "}", RightPinky),
+        k(EK::Backslash, "\\", 1.5, RightPinky),
+        gap(GUTTER),
+        k(EK::Delete, "Del", 1.0, RightPinky),
+        k(EK::End, "End", 1.0, RightPinky),
+        k(EK::PageDown, "PgDn", 1.0, RightPinky),
+    ];
+    if show_numpad {
+        r.extend([
+            gap(GUTTER),
+            cap(Np(7), "7", 1.0, RightIndex),
+            cap(Np(8), "8", 1.0, RightMiddle),
+            cap(Np(9), "9", 1.0, RightRing),
+            tall(NpAdd, "+", RightPinky),
+        ]);
+    }
+    rows.push(r);
+
+    // Home row: Caps 1.75 + 11 keys + Enter 2.25 (= 15u).
+    let mut r = vec![
+        cap(Caps, "Caps", 1.75, LeftPinky),
+        k(EK::A, "A", 1.0, LeftPinky),
+        k(EK::S, "S", 1.0, LeftRing),
+        k(EK::D, "D", 1.0, LeftMiddle),
+        k(EK::F, "F", 1.0, LeftIndex),
+        k(EK::G, "G", 1.0, LeftIndex),
+        k(EK::H, "H", 1.0, RightIndex),
+        k(EK::J, "J", 1.0, RightIndex),
+        k(EK::K, "K", 1.0, RightMiddle),
+        k(EK::L, "L", 1.0, RightRing),
+        k_sh(EK::Semicolon, ";", ":", RightPinky),
+        k_sh(EK::Quote, "'", "\"", RightPinky),
+        k(EK::Enter, "Enter", 2.25, RightPinky),
+        gap(GUTTER + 3.0),
+    ];
+    if show_numpad {
+        r.extend([
+            gap(GUTTER),
+            cap(Np(4), "4", 1.0, RightIndex),
+            cap(Np(5), "5", 1.0, RightMiddle),
+            cap(Np(6), "6", 1.0, RightRing),
+            gap(1.0), // occupied by the tall + above
+        ]);
+    }
+    rows.push(r);
+
+    // Bottom letter row: Shift 2.25 + 10 keys + Shift 2.75 (= 15u).
+    let mut r = vec![
+        cap(ShiftL, "Shift", 2.25, LeftPinky),
+        k(EK::Z, "Z", 1.0, LeftPinky),
+        k(EK::X, "X", 1.0, LeftRing),
+        k(EK::C, "C", 1.0, LeftMiddle),
+        k(EK::V, "V", 1.0, LeftIndex),
+        k(EK::B, "B", 1.0, LeftIndex),
+        k(EK::N, "N", 1.0, RightIndex),
+        k(EK::M, "M", 1.0, RightIndex),
+        k_sh(EK::Comma, ",", "<", RightMiddle),
+        k_sh(EK::Period, ".", ">", RightRing),
+        k_sh(EK::Slash, "/", "?", RightPinky),
+        cap(ShiftR, "Shift", 2.75, RightPinky),
+        gap(GUTTER + 1.0),
+        k(EK::ArrowUp, "\u{2191}", 1.0, RightMiddle),
+        gap(1.0),
+    ];
+    if show_numpad {
+        r.extend([
+            gap(GUTTER),
+            cap(Np(1), "1", 1.0, RightIndex),
+            cap(Np(2), "2", 1.0, RightMiddle),
+            cap(Np(3), "3", 1.0, RightRing),
+            tall(NpEnter, "Ent", RightPinky),
+        ]);
+    }
+    rows.push(r);
+
+    // Modifier row: 3x1.25 + 6.25 space + 4x1.25 (= 15u).
+    let mut r = vec![
+        cap(CtrlL, "Ctrl", 1.25, LeftPinky),
+        cap(SuperL, "Super", 1.25, LeftThumb),
+        cap(AltL, "Alt", 1.25, LeftThumb),
+        k(EK::Space, "", 6.25, RightThumb),
+        cap(AltR, "AltGr", 1.25, RightThumb),
+        cap(SuperR, "Super", 1.25, RightThumb),
+        cap(Menu, "Menu", 1.25, RightPinky),
+        cap(CtrlR, "Ctrl", 1.25, RightPinky),
+        gap(GUTTER),
+        k(EK::ArrowLeft, "\u{2190}", 1.0, RightIndex),
+        k(EK::ArrowDown, "\u{2193}", 1.0, RightMiddle),
+        k(EK::ArrowRight, "\u{2192}", 1.0, RightRing),
+    ];
+    if show_numpad {
+        r.extend([
+            gap(GUTTER),
+            cap(Np(0), "0", 2.0, RightThumb),
+            cap(NpDot, ".", 1.0, RightRing),
+            gap(1.0), // occupied by the tall numpad Enter
+        ]);
+    }
+    rows.push(r);
+
+    let units_wide = if show_numpad {
+        15.0 + GUTTER + 3.0 + GUTTER + 4.0
+    } else {
+        15.0 + GUTTER + 3.0
+    };
+    Board { rows, units_wide }
+}
+
+/// A flat list of every typeable physical key (deduplicated): the `K(Key)` caps.
+/// Modifiers, the PrtSc cluster, and the numpad are drawn but are not typing targets.
 pub fn all_keys() -> Vec<Key> {
     let mut seen = Vec::new();
-    for row in layout() {
-        for cap in row {
-            if !seen.contains(&cap.key) {
-                seen.push(cap.key);
+    for row in board(false).rows {
+        for slot in row {
+            if let Slot::Cap(c) = slot {
+                if let CapId::K(key) = c.id {
+                    if !seen.contains(&key) {
+                        seen.push(key);
+                    }
+                }
             }
         }
     }
@@ -206,21 +366,25 @@ pub const DEV_AUTOTYPE: Key = Key::F9;
 pub const DEV_COMPLETE_PAGE: Key = Key::F10;
 pub const DEV_COMPLETE_CHAPTER: Key = Key::F12;
 
-/// Human-friendly name for a key, used in Random-mode prompts ("press: Page Up").
+/// Human-friendly name for a key, used in Random-mode prompts and stats.
 pub fn display_name(key: Key) -> String {
-    // Prefer the printable label from the layout, else a descriptive name.
+    if key == Key::Space {
+        return "Space".to_string();
+    }
     if let Some(cap) = find_cap(key) {
         return cap.label.to_string();
     }
     format!("{key:?}")
 }
 
-/// Find the keycap for a physical key.
+/// Find the keycap for a typeable physical key.
 pub fn find_cap(key: Key) -> Option<KeyCap> {
-    for row in layout() {
-        for cap in row {
-            if cap.key == key {
-                return Some(cap);
+    for row in board(false).rows {
+        for slot in row {
+            if let Slot::Cap(c) = slot {
+                if c.id == CapId::K(key) {
+                    return Some(c);
+                }
             }
         }
     }
@@ -250,15 +414,19 @@ pub fn char_to_physical(c: char) -> Option<(Key, bool)> {
     if c == '\t' {
         return Some((Key::Tab, false));
     }
-    // Search the layout for unshifted then shifted glyphs.
+    // Search the board for unshifted then shifted glyphs.
     let s = c.to_string();
-    for row in layout() {
-        for cap in row {
-            if cap.label == s {
-                return Some((cap.key, false));
-            }
-            if cap.shifted == Some(s.as_str()) {
-                return Some((cap.key, true));
+    for row in board(false).rows {
+        for slot in row {
+            if let Slot::Cap(cap) = slot {
+                if let CapId::K(key) = cap.id {
+                    if cap.label == s {
+                        return Some((key, false));
+                    }
+                    if cap.shifted == Some(s.as_str()) {
+                        return Some((key, true));
+                    }
+                }
             }
         }
     }
@@ -311,6 +479,8 @@ mod tests {
         assert!(keys.contains(&Key::F1));
         assert!(keys.contains(&Key::Enter));
         assert!(keys.contains(&Key::Escape));
+        assert!(keys.contains(&Key::Insert));
+        assert!(keys.contains(&Key::Delete));
     }
 
     #[test]
@@ -338,10 +508,106 @@ mod tests {
 
     #[test]
     fn every_cap_has_a_finger_zone_under_9() {
-        for row in layout() {
-            for cap in row {
-                assert!(cap.finger.zone() <= 8);
+        for row in board(true).rows {
+            for slot in row {
+                if let Slot::Cap(cap) = slot {
+                    assert!(cap.finger.zone() <= 8);
+                }
             }
         }
+    }
+
+    /// Every row of every board variant must line up to the same total width.
+    #[test]
+    fn rows_align_to_the_board_width() {
+        for show_numpad in [false, true] {
+            let b = board(show_numpad);
+            for (i, row) in b.rows.iter().enumerate() {
+                let w: f32 = row
+                    .iter()
+                    .map(|s| match s {
+                        Slot::Cap(c) => c.width,
+                        Slot::Gap(g) => *g,
+                    })
+                    .sum();
+                assert!(
+                    (w - b.units_wide).abs() < 0.01,
+                    "row {i} is {w}u, board is {}u (numpad={show_numpad})",
+                    b.units_wide
+                );
+            }
+        }
+    }
+
+    /// The board carries the full-size anatomy: both shifts, caps, modifier row, nav
+    /// cluster, inverted-T arrows, and (when shown) the numpad.
+    #[test]
+    fn full_size_anatomy_present() {
+        let b = board(true);
+        let ids: Vec<CapId> = b
+            .rows
+            .iter()
+            .flatten()
+            .filter_map(|s| match s {
+                Slot::Cap(c) => Some(c.id),
+                _ => None,
+            })
+            .collect();
+        for want in [
+            CapId::ShiftL,
+            CapId::ShiftR,
+            CapId::Caps,
+            CapId::CtrlL,
+            CapId::CtrlR,
+            CapId::AltL,
+            CapId::AltR,
+            CapId::SuperL,
+            CapId::Menu,
+            CapId::NumLock,
+            CapId::NpEnter,
+            CapId::Np(0),
+            CapId::Np(9),
+            CapId::K(Key::ArrowUp),
+            CapId::K(Key::ArrowLeft),
+            CapId::K(Key::Insert),
+            CapId::K(Key::PageDown),
+        ] {
+            assert!(ids.contains(&want), "missing {want:?}");
+        }
+        // Numpad hidden variant drops the numpad but keeps the nav cluster.
+        let b2 = board(false);
+        let ids2: Vec<CapId> = b2
+            .rows
+            .iter()
+            .flatten()
+            .filter_map(|s| match s {
+                Slot::Cap(c) => Some(c.id),
+                _ => None,
+            })
+            .collect();
+        assert!(!ids2.contains(&CapId::NumLock));
+        assert!(ids2.contains(&CapId::K(Key::ArrowUp)));
+    }
+
+    #[test]
+    fn key_widths_match_real_geometry() {
+        let b = board(false);
+        let find = |id: CapId| -> f32 {
+            b.rows
+                .iter()
+                .flatten()
+                .find_map(|s| match s {
+                    Slot::Cap(c) if c.id == id => Some(c.width),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(find(CapId::K(Key::Tab)), 1.5);
+        assert_eq!(find(CapId::Caps), 1.75);
+        assert_eq!(find(CapId::ShiftL), 2.25);
+        assert_eq!(find(CapId::ShiftR), 2.75);
+        assert_eq!(find(CapId::K(Key::Backspace)), 2.0);
+        assert_eq!(find(CapId::K(Key::Space)), 6.25);
+        assert_eq!(find(CapId::K(Key::Enter)), 2.25);
     }
 }
