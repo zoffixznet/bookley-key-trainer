@@ -160,3 +160,24 @@ requirements, verified against the live CLI on this box (v2.1.191):
 - Verification tooling: `--smoke` (headless e2e incl. the connect flow), `--screenshot
   PATH [--screen NAME]` (real windowed render captured to PNG, verified on X11), and one
   successful `make live-book-smoke` run with real Opus on 2026-07-10.
+
+## Addendum: third review batch (same day)
+
+Fifteen corrections from the user's review, all shipped (details in DECISIONS):
+
+- Input/stats correctness: exactly one counted keystroke per physical press (auto-repeat
+  suppressed on both the Key and the paired Text event), per-key errors attributed to
+  the key that was expected, real inter-keystroke latency (first keystroke and paused
+  gaps excluded, dash for no data), Backspace drillable in Random mode.
+- Session flow: press-Space-to-start gate in all modes (gate press never counted),
+  Space resumes from pause, Reset stats (Paste/Book) zeroes metrics but keeps the
+  position, quick drill-duration picker on the start gate.
+- Book mode: per-chapter typing progress persisted crash-safely with a one-paragraph
+  rewind on resume; exports stripped to book content only; Claude-designed SVG covers
+  rasterized via resvg (retry once, local typographic fallback) shown in-app and as PDF
+  page one; chapter length guidance rewritten to full novel chapters (400-900 target
+  removed everywhere).
+- Presentation: colorblind-safe error styling (bright ink + tint + underline, checked
+  in grayscale), readable neutral weak-key pills with self-explanatory copy on wrapped
+  rows, labeled WPM chart (legend, dashed raw line, mm:ss time axis), equal-size result
+  actions, one HUD baseline, vertically centered settings labels.
