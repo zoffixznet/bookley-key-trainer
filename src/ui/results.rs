@@ -1,7 +1,11 @@
 //! Results: WPM-over-time line, per-key error/slowness feedback, accuracy, consistency,
 //! and personal-best tracking, laid out on the shared centered column.
+//!
+//! Colorblind rule: nothing on this screen conveys state through hue alone. The two graph
+//! lines differ in dash pattern and weight (plus a labeled legend), and the weak-key
+//! pills are neutral chips whose information is carried by text.
 
-use egui::{Color32, CornerRadius, Sense, Stroke, Vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Sense, Stroke, Vec2};
 
 use crate::core::config::ContentMode;
 use crate::ui::app::{App, Screen};
@@ -37,20 +41,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .strong(),
                     );
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if let Some(best) = app.stats.best_for(&result.mode) {
-                        ui.label(
-                            egui::RichText::new(format!("best {} wpm: {:.0}", result.mode, best))
-                                .color(p.ghost)
-                                .size(12.5),
-                        );
-                    }
-                });
+                // The personal best sits in the header flow, not floating at the edge.
+                if let Some(best) = app.stats.best_for(&result.mode) {
+                    ui.add_space(10.0);
+                    ui.label(
+                        egui::RichText::new(format!("best {} wpm: {:.0}", result.mode, best))
+                            .color(p.ghost)
+                            .size(12.5),
+                    );
+                }
             });
             ui.add_space(14.0);
 
-            // Big numbers on one baseline.
+            // Big numbers on one baseline: a zero-width spacer sets the row height first
+            // so the first stat is not centered against a shorter provisional row.
             ui.horizontal(|ui| {
+                let row_h = ui.fonts_mut(|f| {
+                    f.layout_no_wrap("0".into(), theme::mono_font(38.0), Color32::WHITE)
+                        .size()
+                        .y
+                        + f.layout_no_wrap("x".into(), theme::ui_font(11.0), Color32::WHITE)
+                            .size()
+                            .y
+                }) + ui.spacing().item_spacing.y;
+                ui.allocate_exact_size(egui::vec2(0.0, row_h), Sense::hover());
+                ui.add_space(-ui.spacing().item_spacing.x);
                 big_stat(ui, &p, "wpm", &format!("{:.0}", result.wpm), p.verdigris);
                 big_stat(ui, &p, "raw", &format!("{:.0}", result.raw_wpm), p.ghost);
                 big_stat(
@@ -74,17 +89,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     &format!("{:.0}", result.net_wpm),
                     p.ghost,
                 );
-                big_stat(
-                    ui,
-                    &p,
-                    "time",
-                    &format!(
-                        "{}:{:02}",
-                        result.elapsed_secs as u64 / 60,
-                        result.elapsed_secs as u64 % 60
-                    ),
-                    p.brass,
-                );
+                big_stat(ui, &p, "time", &mmss(result.elapsed_secs), p.brass);
             });
 
             ui.add_space(18.0);
@@ -96,11 +101,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
             ui.add_space(14.0);
             section_label(ui, &p, "SLOW AND ERROR-PRONE KEYS");
-            heatmap(ui, &p, &result);
+            ui.label(
+                egui::RichText::new(
+                    "errors made while the key was expected \u{00B7} average time to reach it",
+                )
+                .color(p.ghost)
+                .size(11.0),
+            );
+            ui.add_space(6.0);
+            weak_key_pills(ui, &p, &result);
 
             ui.add_space(22.0);
-            // Primary action: a proper big button, also triggered by Enter. Book chapters
-            // do not get a "type again"; there the next step is continuing the book.
+            // Two equal-size primary actions; "Type again" keeps the accent. Book
+            // chapters do not get a "type again"; there the next step is continuing.
             let is_book = app.config.content_mode == ContentMode::Book;
             let label = if is_book {
                 "Continue the book (Enter)"
@@ -109,23 +122,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             };
             let mut go = false;
             ui.horizontal(|ui| {
-                let btn = egui::Button::new(
+                let size = egui::vec2(270.0, 46.0);
+                let primary = egui::Button::new(
                     egui::RichText::new(label)
                         .size(17.0)
                         .strong()
                         .color(p.ink_850),
                 )
                 .fill(p.verdigris)
-                .min_size(egui::vec2(270.0, 46.0))
+                .min_size(size)
                 .corner_radius(CornerRadius::same(9));
-                if ui.add(btn).clicked() {
+                if ui.add(primary).clicked() {
                     go = true;
                 }
-                ui.add_space(4.0);
-                if !is_book && ui.button("Drill weak keys (Random)").clicked() {
-                    app.config.content_mode = ContentMode::Random;
-                    app.save_config();
-                    app.start_session();
+                if !is_book {
+                    ui.add_space(4.0);
+                    let secondary = egui::Button::new(
+                        egui::RichText::new("Drill weak keys (Random)")
+                            .size(17.0)
+                            .strong()
+                            .color(p.paper),
+                    )
+                    .fill(p.ink_850)
+                    .stroke(Stroke::new(1.0, p.edge))
+                    .min_size(size)
+                    .corner_radius(CornerRadius::same(9));
+                    if ui.add(secondary).clicked() {
+                        app.config.content_mode = ContentMode::Random;
+                        app.save_config();
+                        app.start_session();
+                    }
                 }
             });
             // Enter shortcut, guarded so the keystroke that finished the session (or a
@@ -181,17 +207,37 @@ fn big_stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str, color: Col
     ui.add_space(26.0);
 }
 
+fn mmss(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// A tick spacing (seconds) that yields readable mm:ss labels for the drill length.
+fn time_tick_step(max_t: f64) -> f64 {
+    if max_t <= 45.0 {
+        10.0
+    } else if max_t <= 100.0 {
+        15.0
+    } else if max_t <= 200.0 {
+        30.0
+    } else if max_t <= 420.0 {
+        60.0
+    } else {
+        120.0
+    }
+}
+
 fn wpm_graph(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
     let w = ui.available_width();
-    let h = 150.0;
+    let h = 170.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
     let painter = ui.painter_at(rect);
     if r.samples.len() < 2 {
         painter.text(
             rect.center(),
-            egui::Align2::CENTER_CENTER,
+            Align2::CENTER_CENTER,
             "Not enough data",
-            egui::FontId::proportional(13.0),
+            FontId::proportional(13.0),
             p.ghost,
         );
         return;
@@ -203,12 +249,13 @@ fn wpm_graph(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionRe
         .map(|s| s.raw.max(s.wpm))
         .fold(1.0, f64::max)
         .max(10.0);
-    let max_t = r.samples.last().unwrap().t.max(0.001);
+    let max_t = r.samples.last().unwrap().t.max(1.0);
+    // Leave room for y figures on the left and mm:ss tick labels below.
     let plot = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + pad + 26.0, rect.top() + pad),
-        egui::pos2(rect.right() - pad, rect.bottom() - pad - 4.0),
+        egui::pos2(rect.left() + pad + 30.0, rect.top() + pad),
+        egui::pos2(rect.right() - pad, rect.bottom() - pad - 18.0),
     );
-    // Light gridlines + axis figures at 0 / mid / max.
+    // Light horizontal gridlines + y figures at 0 / mid / max.
     for frac in [0.0f32, 0.5, 1.0] {
         let y = plot.bottom() - frac * plot.height();
         painter.line_segment(
@@ -217,34 +264,114 @@ fn wpm_graph(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionRe
         );
         painter.text(
             egui::pos2(plot.left() - 6.0, y),
-            egui::Align2::RIGHT_CENTER,
+            Align2::RIGHT_CENTER,
             format!("{:.0}", max_wpm * frac as f64),
-            egui::FontId::monospace(10.0),
+            FontId::monospace(10.0),
             p.ghost,
         );
     }
+    // X axis: time, with mm:ss ticks scaled to the drill length.
+    let step = time_tick_step(max_t);
+    let mut t = 0.0;
+    while t <= max_t + 0.5 {
+        let x = plot.left() + (t / max_t).min(1.0) as f32 * plot.width();
+        painter.line_segment(
+            [
+                egui::pos2(x, plot.bottom()),
+                egui::pos2(x, plot.bottom() + 4.0),
+            ],
+            Stroke::new(1.0, p.ghost),
+        );
+        painter.text(
+            egui::pos2(x, plot.bottom() + 6.0),
+            Align2::CENTER_TOP,
+            mmss(t),
+            FontId::monospace(10.0),
+            p.ghost,
+        );
+        t += step;
+    }
+    painter.text(
+        egui::pos2(plot.right(), plot.bottom() + 6.0),
+        Align2::RIGHT_TOP,
+        "time",
+        FontId::proportional(10.0),
+        p.ghost,
+    );
+
     let map = |t: f64, v: f64| {
         egui::pos2(
             plot.left() + (t / max_t) as f32 * plot.width(),
             plot.bottom() - (v / max_wpm) as f32 * plot.height(),
         )
     };
-    // Raw line (ghost) then wpm line (verdigris, heavier).
-    for (key, color, width) in [("raw", p.ghost, 1.5), ("wpm", p.verdigris, 2.5)] {
-        let pts: Vec<egui::Pos2> = r
-            .samples
-            .iter()
-            .map(|s| map(s.t, if key == "raw" { s.raw } else { s.wpm }))
-            .collect();
-        for w2 in pts.windows(2) {
-            painter.line_segment([w2[0], w2[1]], Stroke::new(width, color));
-        }
+    // Raw: thin dashed ghost line. Dash pattern + weight distinguish it from the wpm
+    // line even in grayscale.
+    let raw_pts: Vec<egui::Pos2> = r.samples.iter().map(|s| map(s.t, s.raw)).collect();
+    painter.add(egui::Shape::dashed_line(
+        &raw_pts,
+        Stroke::new(1.4, p.ghost),
+        6.0,
+        4.0,
+    ));
+    // WPM: heavier solid accent line.
+    let wpm_pts: Vec<egui::Pos2> = r.samples.iter().map(|s| map(s.t, s.wpm)).collect();
+    for w2 in wpm_pts.windows(2) {
+        painter.line_segment([w2[0], w2[1]], Stroke::new(2.5, p.verdigris));
     }
+
+    // Legend, top-right inside the plot: swatch lines + labels, on a small backdrop so
+    // it stays readable when the data runs underneath it.
+    let lx = plot.right() - 96.0;
+    let mut ly = plot.top() + 10.0;
+    let legend_bg = egui::Rect::from_min_max(
+        egui::pos2(lx - 10.0, plot.top() + 1.0),
+        egui::pos2(plot.right() - 2.0, plot.top() + 35.0),
+    );
+    painter.rect_filled(legend_bg, CornerRadius::same(5), p.ink_850);
+    painter.rect_stroke(
+        legend_bg,
+        CornerRadius::same(5),
+        Stroke::new(1.0, p.edge),
+        egui::StrokeKind::Inside,
+    );
+    painter.line_segment(
+        [egui::pos2(lx, ly), egui::pos2(lx + 22.0, ly)],
+        Stroke::new(2.5, p.verdigris),
+    );
+    painter.text(
+        egui::pos2(lx + 28.0, ly),
+        Align2::LEFT_CENTER,
+        "wpm",
+        FontId::proportional(11.5),
+        p.paper,
+    );
+    ly += 16.0;
+    painter.add(egui::Shape::dashed_line(
+        &[egui::pos2(lx, ly), egui::pos2(lx + 22.0, ly)],
+        Stroke::new(1.4, p.ghost),
+        5.0,
+        3.0,
+    ));
+    painter.text(
+        egui::pos2(lx + 28.0, ly),
+        Align2::LEFT_CENTER,
+        "raw",
+        FontId::proportional(11.5),
+        p.paper,
+    );
 }
 
-fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
-    // Show up to the 12 worst keys (by errors then latency).
-    let mut keys: Vec<&(String, u32, u32, Option<f64>)> = r.per_key.iter().collect();
+/// The weak-key pills: neutral chips (no red-on-red), a bold key glyph, plain-ink counts,
+/// self-explanatory copy, wrapped onto as many rows as the column needs.
+fn weak_key_pills(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
+    // Worst keys first: by errors, then by latency; keep keys that actually have a
+    // problem (an error, or a notably slow average).
+    let mut keys: Vec<&(String, u32, u32, Option<f64>)> = r
+        .per_key
+        .iter()
+        .filter(|(_, _, errors, lat)| *errors > 0 || lat.map(|l| l > 400.0).unwrap_or(false))
+        .collect();
     keys.sort_by(|a, b| {
         b.2.cmp(&a.2)
             .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal))
@@ -254,32 +381,80 @@ fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResu
         ui.label(egui::RichText::new("Clean run: no problem keys.").color(p.ghost));
         return;
     }
-    ui.horizontal_wrapped(|ui| {
-        for (label, _presses, errors, lat) in worst {
+
+    let key_font = theme::mono_font(14.5);
+    let detail_font = theme::mono_font(11.5);
+    let pills: Vec<(String, String)> = worst
+        .iter()
+        .map(|(label, _presses, errors, lat)| {
+            let plural = if *errors == 1 { "error" } else { "errors" };
             let lat_str = match lat {
                 Some(l) => format!("{l:.0} ms avg"),
                 None => "\u{2013}".to_string(),
             };
-            egui::Frame::new()
-                .fill(p.ink_850)
-                .stroke(Stroke::new(1.0, p.edge))
-                .corner_radius(CornerRadius::same(7))
-                .inner_margin(egui::Margin::symmetric(10, 6))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
+            (
+                label.clone(),
+                format!("{errors} {plural} \u{00B7} {lat_str}"),
+            )
+        })
+        .collect();
+
+    // Measure each pill, then flow them into rows ourselves: dynamically-sized frames do
+    // not wrap in egui's horizontal_wrapped, which is how the row used to run offscreen.
+    let pad_x = 12.0;
+    let inner_gap = 8.0;
+    let widths: Vec<f32> = ui.fonts_mut(|f| {
+        pills
+            .iter()
+            .map(|(k, d)| {
+                let wk = f
+                    .layout_no_wrap(k.clone(), key_font.clone(), Color32::WHITE)
+                    .size()
+                    .x;
+                let wd = f
+                    .layout_no_wrap(d.clone(), detail_font.clone(), Color32::WHITE)
+                    .size()
+                    .x;
+                wk + inner_gap + wd + pad_x * 2.0
+            })
+            .collect()
+    });
+    let spacing = ui.spacing().item_spacing.x;
+    let avail = ui.available_width();
+    let mut rows: Vec<Vec<usize>> = vec![Vec::new()];
+    let mut x = 0.0;
+    for (i, w) in widths.iter().enumerate() {
+        if x + w > avail && !rows.last().unwrap().is_empty() {
+            rows.push(Vec::new());
+            x = 0.0;
+        }
+        rows.last_mut().unwrap().push(i);
+        x += w + spacing;
+    }
+    for row in rows {
+        ui.horizontal(|ui| {
+            for i in row {
+                let (key, detail) = &pills[i];
+                egui::Frame::new()
+                    .fill(p.ink_850)
+                    .stroke(Stroke::new(1.0, p.edge))
+                    .corner_radius(CornerRadius::same(7))
+                    .inner_margin(egui::Margin::symmetric(pad_x as i8, 6))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.x = inner_gap;
                         ui.label(
-                            egui::RichText::new(label.to_string())
-                                .font(theme::mono_font(14.0))
+                            egui::RichText::new(key)
+                                .font(key_font.clone())
                                 .strong()
                                 .color(p.paper),
                         );
                         ui.label(
-                            egui::RichText::new(format!("{errors} errors \u{00B7} {lat_str}"))
-                                .font(theme::mono_font(11.0))
+                            egui::RichText::new(detail)
+                                .font(detail_font.clone())
                                 .color(p.ghost),
                         );
                     });
-                });
-        }
-    });
+            }
+        });
+    }
 }
