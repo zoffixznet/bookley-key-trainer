@@ -187,6 +187,46 @@ impl Book {
     }
 }
 
+/// Char indices where paragraphs start in a (normalized) chapter typing target.
+/// Paragraphs are separated by a blank line ("\n\n"), which is what
+/// `markdown_to_plain` produces; index 0 is always a paragraph start.
+pub fn paragraph_starts(text: &str) -> Vec<usize> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut starts = vec![0];
+    let mut i = 0;
+    while i + 1 < chars.len() {
+        if chars[i] == '\n' && chars[i + 1] == '\n' {
+            // Skip the whole newline run; the paragraph starts at the next real char.
+            let mut j = i + 1;
+            while j < chars.len() && chars[j] == '\n' {
+                j += 1;
+            }
+            if j < chars.len() {
+                starts.push(j);
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    starts
+}
+
+/// Where to resume typing a chapter, given the saved position `saved` (chars typed into
+/// the normalized target). Rewinds to the previous paragraph boundary as a refresher:
+/// the greatest paragraph start strictly before `saved` (so stopping exactly on a
+/// boundary rewinds one full paragraph), clamped to the text and never negative. The
+/// rewound paragraph is retyped.
+pub fn resume_position(text: &str, saved: usize) -> usize {
+    let len = text.chars().count();
+    let saved = saved.min(len);
+    paragraph_starts(text)
+        .into_iter()
+        .rev()
+        .find(|&s| s < saved)
+        .unwrap_or(0)
+}
+
 pub fn display_title(meta: &BookMeta) -> String {
     if meta.title.trim().is_empty() {
         "Untitled".to_string()
@@ -392,6 +432,69 @@ mod tests {
         let b2 = store.create("", "English", "", true).unwrap();
         assert!(!b1.meta.slug.is_empty());
         assert_ne!(b1.meta.slug, b2.meta.slug);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn resume_rewinds_to_the_previous_paragraph_boundary() {
+        // Paragraph starts: 0, 11, 22.
+        let text = "Para one.\n\nPara two.\n\nPara three.";
+        assert_eq!(paragraph_starts(text), vec![0, 11, 22]);
+
+        // Mid-paragraph: rewind to that paragraph's start.
+        assert_eq!(resume_position(text, 15), 11);
+        assert_eq!(resume_position(text, 30), 22);
+        // Exactly on a boundary (just finished the previous paragraph): rewind one
+        // full paragraph so there is a real refresher to retype.
+        assert_eq!(resume_position(text, 22), 11);
+        assert_eq!(resume_position(text, 11), 0);
+    }
+
+    #[test]
+    fn resume_edge_cases_first_paragraph_and_chapter_end() {
+        let text = "Para one.\n\nPara two.\n\nPara three.";
+        // Nothing typed / within the first paragraph: start at the top.
+        assert_eq!(resume_position(text, 0), 0);
+        assert_eq!(resume_position(text, 5), 0);
+        // Stopped at (or past) the chapter end: resume at the last paragraph.
+        let len = text.chars().count();
+        assert_eq!(resume_position(text, len), 22);
+        assert_eq!(resume_position(text, len + 999), 22, "clamped to the text");
+        // Degenerate targets.
+        assert_eq!(resume_position("", 10), 0);
+        assert_eq!(resume_position("single paragraph only", 12), 0);
+    }
+
+    /// Mid-chapter progress persists to disk, survives a reload, and resumes rewound one
+    /// paragraph; finishing marks the chapter done and done chapters are not resumed.
+    #[test]
+    fn typed_progress_save_reload_rewind_roundtrip() {
+        let root = tmp_root();
+        let store = BookStore::new(root.clone());
+        let mut book = store.create("Resume Me", "English", "", false).unwrap();
+        let text = "Para one.\n\nPara two.\n\nPara three.";
+        book.write_chapter(1, "One", text, "").unwrap();
+
+        // Crash-safe save mid-paragraph-three.
+        book.set_typed_progress(1, 25, false);
+        let reloaded = store.load(&book.meta.slug).unwrap();
+        let ch = &reloaded.meta.chapters[0];
+        assert_eq!(ch.typed_chars, 25);
+        assert!(!ch.done);
+        assert_eq!(resume_position(text, ch.typed_chars), 22);
+
+        // Finishing the chapter marks it done with the full length.
+        let mut reloaded = reloaded;
+        reloaded.set_typed_progress(1, text.chars().count(), true);
+        let again = store.load(&book.meta.slug).unwrap();
+        assert!(again.meta.chapters[0].done);
+        assert!(again.all_chapters_typed());
+
+        // A rewrite resets progress to zero (fresh start, no rewind).
+        let mut again = again;
+        again.write_chapter(1, "One v2", "New text.", "").unwrap();
+        assert_eq!(again.meta.chapters[0].typed_chars, 0);
+        assert!(!again.meta.chapters[0].done);
         let _ = std::fs::remove_dir_all(&root);
     }
 

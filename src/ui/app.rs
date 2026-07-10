@@ -16,9 +16,7 @@ use crate::core::metrics::SessionResult;
 use crate::core::paths;
 use crate::core::session::{PauseClock, Progress, Session};
 use crate::core::stats_store::Stats;
-use crate::core::text_source::{
-    BookSource, PasteSource, RandomSource, Target, TextSource, WordSource,
-};
+use crate::core::text_source::{PasteSource, RandomSource, Target, TextSource, WordSource};
 use crate::ui::keyboard::FlashState;
 use crate::ui::{books, connect, results, settings, stage, theme};
 
@@ -142,6 +140,18 @@ pub struct App {
     pub gen: Option<BookGen>,
     pub auth: AuthUi,
 
+    /// When the active session types a book chapter: (slug, chapter n). Used to persist
+    /// typing progress continuously and crash-safely, whatever mode the UI is in now.
+    session_book: Option<(String, usize)>,
+    /// Offset of the session target within the full normalized chapter (resume rewind).
+    book_resume_offset: usize,
+    /// Full normalized chapter length in chars (whole-chapter progress display).
+    book_chapter_len: usize,
+    /// Last position written to disk (skip redundant writes).
+    progress_saved_pos: usize,
+    /// Throttle for the periodic progress save.
+    last_progress_save: Instant,
+
     /// When set, save a screenshot here after a few frames and exit (verification mode).
     pub screenshot_path: Option<std::path::PathBuf>,
     frame_count: u64,
@@ -195,6 +205,11 @@ impl App {
             book_ui: BookUi::default(),
             gen: None,
             auth: AuthUi::default(),
+            session_book: None,
+            book_resume_offset: 0,
+            book_chapter_len: 0,
+            progress_saved_pos: 0,
+            last_progress_save: Instant::now(),
             screenshot_path: None,
             frame_count: 0,
             start_time: Instant::now(),
@@ -313,6 +328,20 @@ impl App {
         }
     }
 
+    /// Progress through the current target, 0..1. For a resumed book chapter this is the
+    /// whole-chapter progress (the rewound offset counts), not just the served remainder.
+    pub fn session_progress_fraction(&self) -> f32 {
+        let Some(s) = &self.session else {
+            return 0.0;
+        };
+        if self.session_book.is_some() && self.book_chapter_len > 0 {
+            ((self.book_resume_offset + s.cursor) as f32 / self.book_chapter_len as f32)
+                .clamp(0.0, 1.0)
+        } else {
+            s.progress_fraction()
+        }
+    }
+
     /// Dismiss the press-Space-to-start gate: the clock starts now.
     pub fn begin_after_gate(&mut self) {
         if self.session.is_none() || !self.awaiting_start {
@@ -340,6 +369,10 @@ impl App {
     /// Build a text source for the current content mode and start a fresh session.
     /// Word and Random are timed streaming drills; Paste and Book run to completion.
     pub fn start_session(&mut self) {
+        // If a book chapter was in progress, persist its position before replacing the
+        // session (mode switches must never lose progress).
+        self.save_book_progress();
+        self.session_book = None;
         let drill = self.config.drill_secs as f64;
         let error_mode = self.config.error_mode;
         let session = match self.config.content_mode {
@@ -451,13 +484,65 @@ impl App {
         let chapter = book.meta.chapters.iter().find(|c| !c.done)?;
         let md = book.read_chapter(chapter.n).ok()?;
         let plain = crate::core::book::export::markdown_to_plain(&md);
+        // The persisted position indexes the NORMALIZED target (what the session
+        // consumes). Resume rewound to the previous paragraph boundary as a refresher.
+        let full = crate::core::normalize::normalize_target(&plain);
+        let resume = crate::core::book::store::resume_position(&full, chapter.typed_chars);
+        let rest: String = full.chars().skip(resume).collect();
+        self.book_resume_offset = resume;
+        self.book_chapter_len = full.chars().count();
+        self.progress_saved_pos = chapter.typed_chars;
+        self.session_book = Some((slug.clone(), chapter.n));
         self.book_ui.typing_chapter = Some(chapter.n);
+        if resume > 0 {
+            tracing::info!(
+                "resuming book={} chapter={} at {} of {} (rewound from {})",
+                slug,
+                chapter.n,
+                resume,
+                self.book_chapter_len,
+                chapter.typed_chars
+            );
+        }
         let title = format!(
             "{} — Chapter {}",
             crate::core::book::store::display_title(&book.meta),
             chapter.n
         );
-        Some(BookSource::new(plain, title).next_target())
+        Some(Target::from_text(&rest, title))
+    }
+
+    /// Persist the current book-chapter typing position (crash-safe resume). Progress is
+    /// monotonic: rewound refresher typing never regresses the saved position, and a
+    /// chapter already marked done is left alone.
+    pub fn save_book_progress(&mut self) {
+        let Some((slug, n)) = self.session_book.clone() else {
+            return;
+        };
+        let Some(s) = &self.session else {
+            return;
+        };
+        if s.is_complete() {
+            return; // completion goes through finish_session, which marks it done
+        }
+        let pos = self.book_resume_offset + s.cursor;
+        if pos <= self.progress_saved_pos {
+            return;
+        }
+        if let Ok(mut book) = self.store.load(&slug) {
+            let done_already = book.meta.chapters.iter().any(|c| c.n == n && c.done);
+            let on_disk = book
+                .meta
+                .chapters
+                .iter()
+                .find(|c| c.n == n)
+                .map(|c| c.typed_chars)
+                .unwrap_or(0);
+            if !done_already && pos > on_disk {
+                book.set_typed_progress(n, pos, false);
+            }
+            self.progress_saved_pos = pos;
+        }
     }
 
     fn mode_label(&self) -> &'static str {
@@ -511,6 +596,7 @@ impl App {
         // Random mode drills Backspace as an ordinary key; the other modes use it to
         // correct mistakes.
         let backspace_is_input = self.config.content_mode == ContentMode::Random;
+        let cursor_before = self.session.as_ref().map(|s| s.cursor).unwrap_or(0);
         let completed = match self.session.as_mut() {
             Some(s) => feed_session_events(
                 s,
@@ -529,6 +615,24 @@ impl App {
 
         if completed {
             self.finish_session();
+        } else if self.session_book.is_some() {
+            // Book chapters: persist the position whenever a paragraph boundary was
+            // crossed this frame (plus the periodic save in `logic`).
+            let crossed_paragraph = self
+                .session
+                .as_ref()
+                .map(|s| {
+                    (cursor_before..s.cursor).any(|i| {
+                        matches!(
+                            s.target.items.get(i),
+                            Some(crate::core::text_source::Expected::Char('\n'))
+                        )
+                    })
+                })
+                .unwrap_or(false);
+            if crossed_paragraph {
+                self.save_book_progress();
+            }
         }
     }
 
@@ -552,21 +656,10 @@ impl App {
         self.last_result = Some(result);
         self.last_was_pb = is_pb;
 
-        // Book mode: mark the chapter typed and advance.
-        if self.config.content_mode == ContentMode::Book {
-            if let (Some(slug), Some(n)) =
-                (self.book_ui.open_slug.clone(), self.book_ui.typing_chapter)
-            {
-                if let Ok(mut book) = self.store.load(&slug) {
-                    let typed = book
-                        .meta
-                        .chapters
-                        .iter()
-                        .find(|c| c.n == n)
-                        .map(|c| c.words)
-                        .unwrap_or(0);
-                    book.set_typed_progress(n, typed, true);
-                }
+        // Book chapters: mark the chapter fully typed.
+        if let Some((slug, n)) = self.session_book.take() {
+            if let Ok(mut book) = self.store.load(&slug) {
+                book.set_typed_progress(n, self.book_chapter_len, true);
             }
         }
         self.pause = PauseClock::default();
@@ -824,6 +917,12 @@ impl eframe::App for App {
         self.handle_typing_input(ctx);
         self.tick_timed_drill();
 
+        // Crash-safe book progress: periodic save on top of the per-paragraph saves.
+        if self.session_book.is_some() && self.last_progress_save.elapsed().as_secs() >= 3 {
+            self.save_book_progress();
+            self.last_progress_save = Instant::now();
+        }
+
         // Prune old flashes and request repaints while animating.
         let now = self.session_secs();
         self.flash.prune(now, 1.0);
@@ -834,6 +933,11 @@ impl eframe::App for App {
             // Keep the clock, drill timer, and consistency samples ticking.
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
+    }
+
+    /// Shutdown: persist any in-flight book-chapter typing position.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_book_progress();
     }
 
     /// Rendering: the top bar and the current screen.
@@ -1034,8 +1138,11 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                         if mode == ContentMode::Book {
                             app.screen = Screen::Books;
                         } else if mode == ContentMode::Paste {
-                            // Paste needs input first; show the stage which prompts for it.
+                            // Paste needs input first; show the stage which prompts for
+                            // it. Never lose an in-flight book chapter's position.
+                            app.save_book_progress();
                             app.session = None;
+                            app.session_book = None;
                             app.screen = Screen::Typing;
                         } else {
                             app.start_session();

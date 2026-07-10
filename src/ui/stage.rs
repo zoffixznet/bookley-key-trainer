@@ -102,12 +102,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             }
         });
 
-        // Book mode: a thin spine fills as the chapter is typed.
-        if app.config.content_mode == ContentMode::Book {
-            if let Some(s) = &app.session {
-                ui.add_space(8.0);
-                spine(ui, &p, s.progress_fraction());
-            }
+        // Book mode: a thin spine fills as the chapter is typed (whole-chapter progress,
+        // including any resumed portion).
+        if app.config.content_mode == ContentMode::Book && app.session.is_some() {
+            ui.add_space(8.0);
+            spine(ui, &p, app.session_progress_fraction());
         }
 
         // Paused overlay controls.
@@ -207,7 +206,7 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
             };
             let right = match app.config.content_mode {
                 ContentMode::Book | ContentMode::Paste => {
-                    format!("{:.0}%", s.progress_fraction() * 100.0)
+                    format!("{:.0}%", app.session_progress_fraction() * 100.0)
                 }
                 _ => String::new(),
             };
