@@ -33,12 +33,50 @@ pub enum Progress {
     Ignored,
 }
 
+/// Pause bookkeeping over an injected wall clock: `raw_secs` is seconds since session
+/// start by the wall; `active_secs` subtracts every paused gap, so paused time never
+/// counts against WPM or consistency. Pure and fully testable.
+#[derive(Debug, Clone, Default)]
+pub struct PauseClock {
+    paused_total: f64,
+    pause_started: Option<f64>,
+}
+
+impl PauseClock {
+    pub fn is_paused(&self) -> bool {
+        self.pause_started.is_some()
+    }
+
+    pub fn pause(&mut self, raw_secs: f64) {
+        if self.pause_started.is_none() {
+            self.pause_started = Some(raw_secs);
+        }
+    }
+
+    pub fn resume(&mut self, raw_secs: f64) {
+        if let Some(p) = self.pause_started.take() {
+            self.paused_total += (raw_secs - p).max(0.0);
+        }
+    }
+
+    /// Active (unpaused) seconds elapsed, given the raw wall seconds.
+    pub fn active_secs(&self, raw_secs: f64) -> f64 {
+        let current_gap = self
+            .pause_started
+            .map(|p| (raw_secs - p).max(0.0))
+            .unwrap_or(0.0);
+        (raw_secs - self.paused_total - current_gap).max(0.0)
+    }
+}
+
 pub struct Session {
     pub target: Target,
     pub status: Vec<CharStatus>,
     pub cursor: usize,
     pub metrics: Metrics,
     pub error_mode: ErrorMode,
+    /// For timed drills: the session ends when active time reaches this many seconds.
+    pub time_limit_secs: Option<f64>,
     /// Start of the current word (for stop-on-word correction).
     word_start: usize,
     /// Seconds since session start at the previous keystroke, for latency.
@@ -56,14 +94,48 @@ impl Session {
             cursor: 0,
             metrics: Metrics::new(),
             error_mode,
+            time_limit_secs: None,
             word_start: 0,
             last_keystroke_secs: None,
             complete: n == 0,
         }
     }
 
+    /// A timed drill: ends when `limit_secs` of active typing time have elapsed.
+    pub fn with_time_limit(target: Target, error_mode: ErrorMode, limit_secs: f64) -> Self {
+        let mut s = Self::new(target, error_mode);
+        s.time_limit_secs = Some(limit_secs.max(1.0));
+        s
+    }
+
     pub fn is_complete(&self) -> bool {
         self.complete
+    }
+
+    /// Whether the drill timer has run out (always false for untimed sessions).
+    pub fn time_up(&self, active_secs: f64) -> bool {
+        self.time_limit_secs.is_some_and(|l| active_secs >= l)
+    }
+
+    /// Seconds left on the drill timer, if this session is timed.
+    pub fn time_left(&self, active_secs: f64) -> Option<f64> {
+        self.time_limit_secs.map(|l| (l - active_secs).max(0.0))
+    }
+
+    /// Append more items to the target (streaming word/key drills refill near the end).
+    pub fn extend_target(&mut self, extra: Vec<Expected>) {
+        if extra.is_empty() {
+            return;
+        }
+        self.status
+            .extend(std::iter::repeat_n(CharStatus::Pending, extra.len()));
+        self.target.items.extend(extra);
+        self.complete = false;
+    }
+
+    /// How many items remain after the cursor (for refill decisions).
+    pub fn items_remaining(&self) -> usize {
+        self.target.len().saturating_sub(self.cursor)
     }
 
     /// The current expected item, if any.
@@ -339,5 +411,65 @@ mod tests {
     fn empty_target_is_immediately_complete() {
         let s = Session::new(Target::from_text("", "t"), ErrorMode::Off);
         assert!(s.is_complete());
+    }
+
+    /// A pause must not change WPM, accuracy, or consistency: the paused gap is
+    /// subtracted from the clock, so the metrics see identical active timestamps.
+    #[test]
+    fn pause_does_not_change_metrics() {
+        let type_chars = |s: &mut Session, clock: &PauseClock, raws: &[f64]| {
+            for &raw in raws {
+                s.input_char('a', clock.active_secs(raw));
+            }
+        };
+
+        // Control run: 10 keystrokes, one per second, no pause.
+        let mut control = Session::new(Target::from_text(&"a".repeat(10), "t"), ErrorMode::Off);
+        let idle = PauseClock::default();
+        let raws: Vec<f64> = (1..=10).map(|i| i as f64).collect();
+        type_chars(&mut control, &idle, &raws);
+        control.metrics.tick(idle.active_secs(10.0));
+
+        // Paused run: same cadence, but a 60-second pause after the 5th keystroke.
+        let mut paused = Session::new(Target::from_text(&"a".repeat(10), "t"), ErrorMode::Off);
+        let mut clock = PauseClock::default();
+        type_chars(&mut paused, &clock, &[1.0, 2.0, 3.0, 4.0, 5.0]);
+        clock.pause(5.2);
+        // While paused, active time is frozen.
+        assert!((clock.active_secs(30.0) - 5.2).abs() < 1e-9);
+        assert!(clock.is_paused());
+        clock.resume(65.2);
+        assert!(!clock.is_paused());
+        // Wall time is now shifted by exactly 60s; active time continues from 5.2.
+        type_chars(&mut paused, &clock, &[66.0, 67.0, 68.0, 69.0, 70.0]);
+        paused.metrics.tick(clock.active_secs(70.0));
+
+        assert!((paused.metrics.elapsed_secs - control.metrics.elapsed_secs).abs() < 1e-9);
+        assert!((paused.metrics.wpm() - control.metrics.wpm()).abs() < 1e-9);
+        assert!((paused.metrics.consistency() - control.metrics.consistency()).abs() < 1e-9);
+        assert_eq!(paused.metrics.correct_chars, control.metrics.correct_chars);
+    }
+
+    #[test]
+    fn timed_session_reports_time_up_and_left() {
+        let s = Session::with_time_limit(Target::from_text("abc", "t"), ErrorMode::Off, 30.0);
+        assert!(!s.time_up(29.9));
+        assert!(s.time_up(30.0));
+        assert_eq!(s.time_left(10.0), Some(20.0));
+        let untimed = Session::new(Target::from_text("abc", "t"), ErrorMode::Off);
+        assert!(!untimed.time_up(1e9));
+        assert_eq!(untimed.time_left(5.0), None);
+    }
+
+    #[test]
+    fn extend_target_refills_a_stream() {
+        let mut s = Session::new(Target::from_text("ab", "t"), ErrorMode::Off);
+        assert_eq!(s.input_char('a', 0.1), Progress::Advanced);
+        assert_eq!(s.items_remaining(), 1);
+        s.extend_target("cd".chars().map(Expected::Char).collect());
+        assert_eq!(s.items_remaining(), 3);
+        assert_eq!(s.input_char('b', 0.2), Progress::Advanced);
+        assert_eq!(s.input_char('c', 0.3), Progress::Advanced);
+        assert_eq!(s.input_char('d', 0.4), Progress::Complete);
     }
 }

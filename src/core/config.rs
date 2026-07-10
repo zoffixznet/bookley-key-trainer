@@ -124,11 +124,33 @@ pub struct Config {
     pub reduced_motion: bool,
     /// Default target language for new books (free text).
     pub default_language: String,
-    /// Number of keys to request in a Random-mode round.
+    /// Number of keys to request in a Random-mode round (legacy; drills are timed now).
     pub random_round_len: usize,
     /// Model alias for book generation.
     pub book_model: String,
+    /// Timed-drill duration in seconds (Word and Random modes).
+    #[serde(default = "default_drill_secs")]
+    pub drill_secs: u64,
+    /// Draw the numpad section of the on-screen keyboard.
+    #[serde(default = "default_true")]
+    pub show_numpad: bool,
 }
+
+fn default_drill_secs() -> u64 {
+    120
+}
+fn default_true() -> bool {
+    true
+}
+
+/// The drill-duration presets offered in Settings: (seconds, label).
+pub const DRILL_PRESETS: [(u64, &str); 5] = [
+    (30, "30s"),
+    (60, "1m"),
+    (120, "2m"),
+    (180, "3m"),
+    (300, "5m"),
+];
 
 impl Default for Config {
     fn default() -> Self {
@@ -136,7 +158,8 @@ impl Default for Config {
             keyboard_mode: KeyboardMode::Guide,
             content_mode: ContentMode::Word,
             error_mode: ErrorMode::Off,
-            theme: Theme::Dark,
+            // The light "foolscap" theme is the flagship default; a saved choice wins.
+            theme: Theme::Light,
             caret: CaretStyle::Block,
             sound: false,
             reduced_motion: false,
@@ -144,6 +167,8 @@ impl Default for Config {
             random_round_len: 30,
             // Spec: novel generation defaults to Opus; changeable in Settings.
             book_model: "opus".to_string(),
+            drill_secs: default_drill_secs(),
+            show_numpad: true,
         }
     }
 }

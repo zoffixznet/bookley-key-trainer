@@ -44,8 +44,13 @@ if [[ "${1:-}" == "setup-token" ]]; then
 fi
 
 # ---- claude -p ... (headless generation) ----
-# Consume the prompt from stdin like the real CLI.
-cat >/dev/null || true
+# Consume the prompt from stdin like the real CLI; optionally dump it for tests that
+# assert what actually reached the agent.
+if [[ -n "${FAKE_CLAUDE_DUMP_PROMPT:-}" ]]; then
+    cat > "$FAKE_CLAUDE_DUMP_PROMPT" || true
+else
+    cat >/dev/null || true
+fi
 
 if [[ "$mode" == "hang" ]]; then
     # exec so the kill from the app-side watchdog hits the sleeping process itself

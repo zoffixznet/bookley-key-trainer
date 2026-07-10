@@ -83,18 +83,46 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         heatmap(ui, &p, &result);
 
         ui.add_space(20.0);
+        // Primary action: a proper big button, also triggered by Enter. Book chapters do
+        // not get a "type again"; the next step there is the continue-the-book flow.
+        let is_book = app.config.content_mode == ContentMode::Book;
+        let label = if is_book {
+            "Continue the book (Enter)"
+        } else {
+            "Type again (Enter)"
+        };
+        let mut go = false;
         ui.horizontal(|ui| {
-            if ui.button("Type again").clicked() {
-                next_action(app);
+            let btn = egui::Button::new(
+                egui::RichText::new(label)
+                    .size(18.0)
+                    .strong()
+                    .color(p.ink_950),
+            )
+            .fill(p.verdigris)
+            .min_size(egui::vec2(260.0, 44.0))
+            .corner_radius(egui::CornerRadius::same(8));
+            if ui.add(btn).clicked() {
+                go = true;
             }
-            if app.config.content_mode != ContentMode::Book
-                && ui.button("Drill weak keys (Random)").clicked()
-            {
+            if !is_book && ui.button("Drill weak keys (Random)").clicked() {
                 app.config.content_mode = ContentMode::Random;
                 app.save_config();
                 app.start_session();
             }
         });
+        // Enter shortcut, guarded so the keystroke that finished the session (or held
+        // Enter auto-repeat) cannot immediately restart it.
+        let settled = app
+            .results_at
+            .map(|t| t.elapsed().as_millis() > 400)
+            .unwrap_or(true);
+        if settled && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            go = true;
+        }
+        if go {
+            next_action(app);
+        }
         ui.add_space(20.0);
     });
 }

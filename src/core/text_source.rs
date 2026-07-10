@@ -139,6 +139,12 @@ impl RandomSource {
         &self.pool
     }
 
+    /// A fresh batch of `n` keys, honoring the adaptive weights (for stream refills).
+    pub fn batch(&self, n: usize) -> Vec<Key> {
+        let mut rng = rand::rng();
+        (0..n).map(|_| self.pick(&mut rng)).collect()
+    }
+
     fn pick(&self, rng: &mut impl rand::RngExt) -> Key {
         match &self.weights {
             Some(w) => {
@@ -162,16 +168,14 @@ impl RandomSource {
 
 impl TextSource for RandomSource {
     fn next_target(&mut self) -> Target {
-        let mut rng = rand::rng();
-        let keys: Vec<Key> = (0..self.round_len).map(|_| self.pick(&mut rng)).collect();
-        Target::from_keys(keys, "Random keys")
+        Target::from_keys(self.batch(self.round_len), "Random keys")
     }
     fn mode_label(&self) -> &'static str {
         "random"
     }
 }
 
-/// Single-word source over the bundled list.
+/// Word-drill source over the bundled list: yields a flowing stream of words.
 pub struct WordSource {
     list: super::wordlist::WordList,
 }
@@ -188,19 +192,39 @@ impl WordSource {
             list: super::wordlist::WordList::new(),
         }
     }
+
+    /// `n` random words joined by single spaces, as extendable target items.
+    pub fn batch(&self, n: usize) -> Vec<Expected> {
+        let mut items = Vec::new();
+        for i in 0..n.max(1) {
+            if i > 0 {
+                items.push(Expected::Char(' '));
+            }
+            items.extend(self.list.random().chars().map(Expected::Char));
+        }
+        items
+    }
+
+    /// A stream target of `n` words for the timed drill.
+    pub fn stream_target(&self, n: usize) -> Target {
+        Target {
+            items: self.batch(n),
+            title: "Word drill".to_string(),
+        }
+    }
 }
 
 impl TextSource for WordSource {
     fn next_target(&mut self) -> Target {
-        let w = self.list.random();
-        Target::from_text(w, w)
+        self.stream_target(200)
     }
     fn mode_label(&self) -> &'static str {
         "word"
     }
 }
 
-/// Paste source: reproduces the exact text the user provided.
+/// Paste source: reproduces the text the user provided, normalized to a plain-ASCII
+/// typing target (accents folded, smart punctuation straightened, exotic spaces mapped).
 pub struct PasteSource {
     text: String,
     served: bool,
@@ -209,7 +233,7 @@ pub struct PasteSource {
 impl PasteSource {
     pub fn new(text: String) -> Self {
         PasteSource {
-            text,
+            text: super::normalize::normalize_target(&text),
             served: false,
         }
     }
@@ -232,8 +256,13 @@ pub struct BookSource {
 }
 
 impl BookSource {
+    /// The chapter file on disk keeps its original Unicode; the typing target is
+    /// normalized so every character is reachable on a plain keyboard.
     pub fn new(text: String, title: String) -> Self {
-        BookSource { text, title }
+        BookSource {
+            text: super::normalize::normalize_target(&text),
+            title,
+        }
     }
 }
 
@@ -273,27 +302,36 @@ mod tests {
     }
 
     #[test]
-    fn word_source_draws_from_list() {
-        let mut src = WordSource::new();
-        let t = src.next_target();
-        assert!(!t.is_empty());
+    fn word_source_streams_many_words() {
+        let src = WordSource::new();
+        let t = src.stream_target(50);
         assert!(t.items.iter().all(|e| e.is_char()));
+        let text = t.visible_text();
+        assert_eq!(text.split(' ').count(), 50);
+        assert!(!text.contains("  "), "single spaces between words");
+        // Batches are extendable stream chunks.
+        let extra = src.batch(10);
+        assert!(!extra.is_empty());
     }
 
     #[test]
-    fn paste_reproduces_exactly() {
+    fn paste_reproduces_ascii_exactly_and_normalizes_unicode() {
         let input = "Hello, World! 123";
         let mut src = PasteSource::new(input.to_string());
-        let t = src.next_target();
-        let got: String = t
-            .items
-            .iter()
-            .map(|e| match e {
-                Expected::Char(c) => *c,
-                _ => '?',
-            })
-            .collect();
-        assert_eq!(got, input);
+        assert_eq!(src.next_target().visible_text(), input);
+
+        // Unicode input is normalized into a typeable target.
+        let mut src = PasteSource::new("Émile heard it too — a third key".to_string());
+        assert_eq!(
+            src.next_target().visible_text(),
+            "Emile heard it too - a third key"
+        );
+    }
+
+    #[test]
+    fn book_source_normalizes_target() {
+        let mut src = BookSource::new("“Café—now…”".to_string(), "t".into());
+        assert_eq!(src.next_target().visible_text(), "\"Cafe-now...\"");
     }
 
     #[test]

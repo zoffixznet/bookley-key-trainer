@@ -130,5 +130,28 @@ fn spawn_paths_against_fake_claude() {
     std::env::remove_var("FAKE_CLAUDE_MODE");
     assert_eq!(claude_auth::load_token(), None);
 
+    // --- the last-chapter conclude directive reaches the agent's prompt ---
+    let store = bookley::core::book::store::BookStore::new(data.join("books"));
+    let book = store
+        .create("End Test", "English", "a short tale", false)
+        .unwrap();
+    let conclude_prompt =
+        bookley::core::book::prompt::chapter_prompt(&book, 2, "finish it", false, None, true);
+    assert!(conclude_prompt.contains(bookley::core::book::prompt::CONCLUDE_DIRECTIVE));
+    let dump = data.join("prompt-dump.txt");
+    std::env::set_var("FAKE_CLAUDE_DUMP_PROMPT", &dump);
+    let mut creq = req(&data, 60);
+    creq.prompt = conclude_prompt;
+    runner
+        .run(&creq, &AtomicBool::new(false), &mut |_| {})
+        .expect("conclude generation succeeds");
+    std::env::remove_var("FAKE_CLAUDE_DUMP_PROMPT");
+    let sent = std::fs::read_to_string(&dump).expect("prompt dump written");
+    assert!(
+        sent.contains("Conclude the story IN THIS CHAPTER"),
+        "the conclude directive must reach the spawned agent"
+    );
+    assert!(sent.contains("not a cliffhanger"));
+
     let _ = std::fs::remove_dir_all(&data);
 }

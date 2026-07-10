@@ -35,6 +35,7 @@ typst-as-lib = { version = "=0.16.0", features = ["typst-kit-fonts", "typst-kit-
 typst = "=0.15.0"
 typst-pdf = "=0.15.0"
 portable-pty = "=0.9.0"
+unicode-normalization = "=0.1.25"
 
 [profile.release]
 opt-level = 2

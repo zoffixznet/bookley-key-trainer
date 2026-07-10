@@ -139,7 +139,7 @@ fn book_cycle(live: bool) -> Result<(), String> {
 
     let runner = ClaudeRunner::new();
     let req = GenRequest {
-        prompt: prompt::chapter_prompt(&book, 1, "", false, None),
+        prompt: prompt::chapter_prompt(&book, 1, "", false, None, false),
         system_prompt: prompt::system_prompt(),
         model: if live { "opus".into() } else { "sonnet".into() },
         plugin_dir,

@@ -53,18 +53,26 @@ Never ask more than once. If you were told not to ask, do not ask; invent decisi
     )
 }
 
+/// The directive injected when the reader marks this as the last chapter.
+pub const CONCLUDE_DIRECTIVE: &str = "IMPORTANT: the reader has decided this is the LAST \
+chapter of the book. Conclude the story IN THIS CHAPTER: steer to the climax, resolve or \
+deliberately land the open threads, and end on resolution, not a cliffhanger and not a \
+moral. Do not set up anything new that this chapter cannot pay off.";
+
 /// Build the per-turn user prompt for generating chapter `n` of `book`.
 ///
 /// `continuation` is the user's single-line "how should the story continue" (may be empty).
 /// `allow_clarify` gates the one clarifying turn; when false the agent must write directly.
 /// `story_so_far_path` optionally points at a file with the full prior text (referenced,
 /// not pasted, to respect the stdin cap for long novels).
+/// `conclude` marks this as the book's final chapter: the agent must land the ending.
 pub fn chapter_prompt(
     book: &Book,
     n: usize,
     continuation: &str,
     allow_clarify: bool,
     story_so_far_path: Option<&str>,
+    conclude: bool,
 ) -> String {
     let meta = &book.meta;
     let bible = book.read_bible();
@@ -145,7 +153,12 @@ necessary; otherwise write the chapter now.\n\n",
         }
     }
 
-    p.push_str(&conclude_guidance(meta, n));
+    if conclude {
+        p.push_str(CONCLUDE_DIRECTIVE);
+        p.push_str("\n\n");
+    } else {
+        p.push_str(&conclude_guidance(meta, n));
+    }
     p.push_str(&length_and_language(meta));
     p.push_str("\nReturn only the marked blocks per the output contract.");
     p
@@ -363,7 +376,7 @@ mod tests {
     fn chapter_prompt_invokes_skill_deterministically() {
         let store = tmp_store();
         let book = store.create("T", "English", "a heist", false).unwrap();
-        let p = chapter_prompt(&book, 1, "make it tense", true, None);
+        let p = chapter_prompt(&book, 1, "make it tense", true, None, false);
         assert!(p.starts_with("/novelist:write-chapter"));
         assert!(p.contains("chapter 1"));
         assert!(p.contains("make it tense"));
@@ -374,7 +387,7 @@ mod tests {
     fn blank_confirmed_disables_clarifying() {
         let store = tmp_store();
         let book = store.create("", "", "", true).unwrap();
-        let p = chapter_prompt(&book, 1, "", false, None);
+        let p = chapter_prompt(&book, 1, "", false, None, false);
         assert!(p.contains("may NOT ask") || p.contains("not ask any clarifying"));
         assert!(!p.contains("MAY ask one round"));
     }
@@ -424,13 +437,26 @@ More prose.\n===BIBLE===\nCAST: Mara\n===END===\njunk after";
     fn blank_title_asks_for_book_title_and_parses_it() {
         let store = tmp_store();
         let book = store.create("", "English", "", true).unwrap();
-        let p = chapter_prompt(&book, 1, "", false, None);
+        let p = chapter_prompt(&book, 1, "", false, None, false);
         assert!(p.contains("BOOK-TITLE:"));
         assert_eq!(
             book_title_from_bible("BOOK-TITLE: The Salt Road\nCAST: A"),
             Some("The Salt Road".to_string())
         );
         assert_eq!(book_title_from_bible("CAST: A"), None);
+    }
+
+    #[test]
+    fn conclude_flag_injects_the_directive() {
+        let store = tmp_store();
+        let book = store.create("T", "English", "a heist", false).unwrap();
+        let p = chapter_prompt(&book, 3, "wrap it up", false, None, true);
+        assert!(p.contains(CONCLUDE_DIRECTIVE));
+        assert!(p.contains("LAST"));
+        // The normal arc guidance is replaced, not doubled.
+        assert!(!p.contains("Judge your position in the arc"));
+        let p2 = chapter_prompt(&book, 3, "keep going", false, None, false);
+        assert!(!p2.contains(CONCLUDE_DIRECTIVE));
     }
 
     #[test]

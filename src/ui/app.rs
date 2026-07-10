@@ -14,7 +14,7 @@ use crate::core::config::{Config, ContentMode, KeyboardMode};
 use crate::core::keys;
 use crate::core::metrics::SessionResult;
 use crate::core::paths;
-use crate::core::session::{Progress, Session};
+use crate::core::session::{PauseClock, Progress, Session};
 use crate::core::stats_store::Stats;
 use crate::core::text_source::{
     BookSource, PasteSource, RandomSource, Target, TextSource, WordSource,
@@ -39,6 +39,8 @@ pub struct BookGen {
     pub live_text: String,
     pub n: usize,
     pub is_rewrite: bool,
+    /// This generation was asked to conclude the book.
+    pub conclude: bool,
     pub started: Instant,
 }
 
@@ -87,6 +89,8 @@ pub struct BookUi {
     pub show_create: bool,
     /// The single-line "how should the story continue" input.
     pub continuation: String,
+    /// "Make this chapter the last chapter of the book."
+    pub make_last: bool,
     /// The clarifying-question round: questions from the agent + the user's answer.
     pub pending_questions: Option<String>,
     pub clarify_answer: String,
@@ -112,11 +116,17 @@ pub struct App {
     // Active typing session (None between sessions).
     pub session: Option<Session>,
     pub session_started: Option<Instant>,
+    /// Pause bookkeeping: paused time never counts toward metrics.
+    pub pause: PauseClock,
     pub last_result: Option<SessionResult>,
     pub last_was_pb: bool,
+    /// When the results screen was entered (guards the Enter shortcut).
+    pub results_at: Option<Instant>,
 
-    // Text sources per mode (recreated as needed).
+    // Text sources per mode (streaming drills refill from these).
     pub paste_input: String,
+    word_src: WordSource,
+    random_src: Option<RandomSource>,
 
     // Keyboard flash animation state.
     pub flash: FlashState,
@@ -167,9 +177,13 @@ impl App {
             dev_mode,
             session: None,
             session_started: None,
+            pause: PauseClock::default(),
             last_result: None,
             last_was_pb: false,
+            results_at: None,
             paste_input: String::new(),
+            word_src: WordSource::new(),
+            random_src: None,
             flash: FlashState::default(),
             store,
             agent,
@@ -261,41 +275,59 @@ impl App {
         }
     }
 
-    /// Seconds since the current session started (0 if none).
-    fn session_secs(&self) -> f64 {
+    /// Raw wall seconds since the current session started (0 if none).
+    fn raw_secs(&self) -> f64 {
         self.session_started
             .map(|t| t.elapsed().as_secs_f64())
             .unwrap_or(0.0)
     }
 
-    /// Public accessor for the keyboard flash clock.
-    pub fn session_started_secs(&self) -> Option<f64> {
-        self.session_started.map(|t| t.elapsed().as_secs_f64())
+    /// Active (unpaused) seconds of the current session; this is the metrics clock.
+    pub fn session_secs(&self) -> f64 {
+        self.pause.active_secs(self.raw_secs())
     }
 
-    /// Build a text source for the current content mode and start a fresh session.
-    pub fn start_session(&mut self) {
-        let target = self.next_target_for_mode();
-        if let Some(target) = target {
-            let mut s = Session::new(target, self.config.error_mode);
-            s.metrics.tick(0.0);
-            self.session = Some(s);
-            self.session_started = Some(Instant::now());
-            self.screen = Screen::Typing;
+    /// Public accessor for the keyboard flash clock.
+    pub fn session_started_secs(&self) -> Option<f64> {
+        self.session_started.map(|_| self.session_secs())
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.pause.is_paused()
+    }
+
+    /// Pause or resume the active drill. Paused time never counts toward metrics.
+    pub fn toggle_pause(&mut self) {
+        if self.session.is_none() {
+            return;
+        }
+        let raw = self.raw_secs();
+        if self.pause.is_paused() {
+            self.pause.resume(raw);
+        } else {
+            self.pause.pause(raw);
         }
     }
 
-    fn next_target_for_mode(&mut self) -> Option<Target> {
-        match self.config.content_mode {
+    /// Build a text source for the current content mode and start a fresh session.
+    /// Word and Random are timed streaming drills; Paste and Book run to completion.
+    pub fn start_session(&mut self) {
+        let drill = self.config.drill_secs as f64;
+        let error_mode = self.config.error_mode;
+        let session = match self.config.content_mode {
             ContentMode::Random => {
-                let mut src = RandomSource::new(self.config.random_round_len);
-                // Adaptive weighting toward weak keys from stored stats.
+                let mut src = RandomSource::new(120);
                 if let Some(weights) = self.adaptive_weights(src.pool()) {
                     src.set_weights(weights);
                 }
-                Some(src.next_target())
+                let target = src.next_target();
+                self.random_src = Some(src);
+                Some(Session::with_time_limit(target, error_mode, drill))
             }
-            ContentMode::Word => Some(WordSource::new().next_target()),
+            ContentMode::Word => {
+                let target = self.word_src.stream_target(120);
+                Some(Session::with_time_limit(target, error_mode, drill))
+            }
             ContentMode::Paste => {
                 let text = self.paste_input.trim();
                 if text.is_empty() {
@@ -303,10 +335,53 @@ impl App {
                 } else {
                     // Cap oversized pastes so the app stays responsive.
                     let capped: String = text.chars().take(20_000).collect();
-                    Some(PasteSource::new(capped).next_target())
+                    Some(Session::new(
+                        PasteSource::new(capped).next_target(),
+                        error_mode,
+                    ))
                 }
             }
-            ContentMode::Book => self.next_book_target(),
+            ContentMode::Book => self.next_book_target().map(|t| Session::new(t, error_mode)),
+        };
+        if let Some(mut s) = session {
+            s.metrics.tick(0.0);
+            self.session = Some(s);
+            self.session_started = Some(Instant::now());
+            self.pause = PauseClock::default();
+            self.screen = Screen::Typing;
+        }
+    }
+
+    /// Timed drills stream: refill the target near the end, and stop when time is up.
+    fn tick_timed_drill(&mut self) {
+        let now = self.session_secs();
+        let mut time_up = false;
+        if let Some(s) = self.session.as_mut() {
+            if s.time_limit_secs.is_some() {
+                if s.items_remaining() < 60 {
+                    let extra = match self.config.content_mode {
+                        ContentMode::Word => self.word_src.batch(60),
+                        ContentMode::Random => self
+                            .random_src
+                            .as_ref()
+                            .map(|src| {
+                                src.batch(60)
+                                    .into_iter()
+                                    .map(crate::core::text_source::Expected::PhysicalKey)
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        _ => Vec::new(),
+                    };
+                    s.extend_target(extra);
+                }
+                if s.time_up(now) && !self.pause.is_paused() {
+                    time_up = true;
+                }
+            }
+        }
+        if time_up {
+            self.finish_session();
         }
     }
 
@@ -380,7 +455,7 @@ impl App {
 
     /// Handle keyboard input for the active typing session.
     fn handle_typing_input(&mut self, ctx: &egui::Context) {
-        if self.session.is_none() || self.screen != Screen::Typing {
+        if self.session.is_none() || self.screen != Screen::Typing || self.is_paused() {
             return;
         }
         let now = self.session_secs();
@@ -483,9 +558,14 @@ impl App {
     }
 
     fn finish_session(&mut self) {
-        let Some(session) = self.session.take() else {
+        let Some(mut session) = self.session.take() else {
             return;
         };
+        // Make sure the clock reflects the final active time (timed drills can end
+        // between keystrokes).
+        session
+            .metrics
+            .tick(self.pause.active_secs(self.raw_secs()));
         let result = SessionResult::from_metrics(&session.metrics, self.mode_label());
         tracing::info!(
             "session complete mode={} {}",
@@ -514,6 +594,8 @@ impl App {
                 }
             }
         }
+        self.pause = PauseClock::default();
+        self.results_at = Some(Instant::now());
         self.screen = Screen::Results;
     }
 
@@ -580,7 +662,7 @@ impl App {
                     } => {
                         self.write_generated_chapter(
                             &mut book,
-                            gen.n,
+                            &gen,
                             &title,
                             &prose,
                             &bible,
@@ -590,7 +672,7 @@ impl App {
                     ParsedReply::Fallback(prose) => {
                         self.write_generated_chapter(
                             &mut book,
-                            gen.n,
+                            &gen,
                             "",
                             &prose,
                             "",
@@ -616,12 +698,13 @@ impl App {
     fn write_generated_chapter(
         &mut self,
         book: &mut Book,
-        n: usize,
+        gen: &BookGen,
         title: &str,
         prose: &str,
         bible: &str,
         session_id: Option<String>,
     ) {
+        let n = gen.n;
         if prose.trim().is_empty() {
             self.book_ui.status = Some("The author returned an empty chapter. Try again.".into());
             return;
@@ -635,18 +718,28 @@ impl App {
                 book.meta.title = t;
             }
         }
+        // A generation that was asked to conclude the book marks it finished.
+        if gen.conclude && !gen.is_rewrite {
+            book.meta.concluded = true;
+        }
         if let Err(e) = book.write_chapter(n, title, prose, bible) {
             self.book_ui.status = Some(format!("Failed to save the chapter: {e}"));
             return;
         }
         self.book_ui.pending_questions = None;
         self.book_ui.continuation.clear();
-        self.book_ui.status = Some(format!("Chapter {n} is ready. Type it to bind it in."));
+        self.book_ui.make_last = false;
+        self.book_ui.status = Some(if book.meta.concluded {
+            format!("Chapter {n} is ready, and it ends the book. Type it to bind it in.")
+        } else {
+            format!("Chapter {n} is ready. Type it to bind it in.")
+        });
     }
 
     /// Kick off a chapter generation (or the clarifying turn / rewrite) on a background
-    /// thread. `allow_clarify` and blank-confirm logic is handled by the caller.
-    pub fn start_generation(&mut self, n: usize, is_rewrite: bool, prompt: String) {
+    /// thread. `allow_clarify` and blank-confirm logic is handled by the caller;
+    /// `conclude` marks this as the book's final chapter.
+    pub fn start_generation(&mut self, n: usize, is_rewrite: bool, conclude: bool, prompt: String) {
         let Some(slug) = self.book_ui.open_slug.clone() else {
             return;
         };
@@ -686,6 +779,7 @@ impl App {
             live_text: String::new(),
             n,
             is_rewrite,
+            conclude,
             started: Instant::now(),
         });
         self.book_ui.status = Some("Writing...".into());
@@ -753,6 +847,7 @@ impl eframe::App for App {
         self.poll_auth();
         self.poll_gen(ctx);
         self.handle_typing_input(ctx);
+        self.tick_timed_drill();
 
         // Prune old flashes and request repaints while animating.
         let now = self.session_secs();
@@ -760,8 +855,8 @@ impl eframe::App for App {
         if !self.config.reduced_motion && self.flash.is_animating(now, 0.5) {
             ctx.request_repaint();
         }
-        if self.session.is_some() && self.screen == Screen::Typing {
-            // Keep the clock and consistency samples ticking.
+        if self.session.is_some() && self.screen == Screen::Typing && !self.is_paused() {
+            // Keep the clock, drill timer, and consistency samples ticking.
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }

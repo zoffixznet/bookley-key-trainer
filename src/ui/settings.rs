@@ -103,13 +103,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         });
 
         ui.group(|ui| {
-            ui.label(egui::RichText::new("Random mode").color(p.ghost));
-            let mut len = app.config.random_round_len as u32;
+            ui.label(egui::RichText::new("Drills").color(p.ghost));
+            ui.horizontal(|ui| {
+                ui.label("Drill duration:");
+                for (secs, label) in crate::core::config::DRILL_PRESETS {
+                    if ui
+                        .selectable_label(app.config.drill_secs == secs, label)
+                        .clicked()
+                    {
+                        app.config.drill_secs = secs;
+                        changed = true;
+                    }
+                }
+            });
+            ui.label(
+                egui::RichText::new(
+                    "Word and Random drills run for this long; results appear when time \
+is up.",
+                )
+                .color(p.ghost)
+                .size(12.0),
+            );
             if ui
-                .add(egui::Slider::new(&mut len, 10..=80).text("keys per round"))
+                .checkbox(
+                    &mut app.config.show_numpad,
+                    "Show the numpad on the keyboard",
+                )
                 .changed()
             {
-                app.config.random_round_len = len as usize;
                 changed = true;
             }
         });

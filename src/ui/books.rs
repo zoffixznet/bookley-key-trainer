@@ -274,7 +274,7 @@ Rewriting resets this chapter's typing progress.",
                     let prompt =
                         prompt::rewrite_prompt(&book, rn, &app.book_ui.rewrite_instruction);
                     app.book_ui.rewrite_n = None;
-                    app.start_generation(rn, true, prompt);
+                    app.start_generation(rn, true, false, prompt);
                 }
                 if ui.button("Cancel").clicked() {
                     app.book_ui.rewrite_n = None;
@@ -300,10 +300,11 @@ Rewriting resets this chapter's typing progress.",
                     "{}\n\nYour earlier questions and my answers:\n{}",
                     app.book_ui.continuation, answer
                 );
-                let prompt = prompt::chapter_prompt(&book, n, &combined, false, None);
+                let conclude = app.book_ui.make_last;
+                let prompt = prompt::chapter_prompt(&book, n, &combined, false, None, conclude);
                 app.book_ui.pending_questions = None;
                 app.book_ui.clarify_answer.clear();
-                app.start_generation(n, false, prompt);
+                app.start_generation(n, false, conclude, prompt);
             }
         });
         return;
@@ -323,9 +324,10 @@ this chapter?",
                 if ui.button("Yes, invent it").clicked() {
                     let n = n_chapters + 1;
                     // Blank confirmed: clarifying disabled.
-                    let prompt = prompt::chapter_prompt(&book, n, "", false, None);
+                    let conclude = app.book_ui.make_last;
+                    let prompt = prompt::chapter_prompt(&book, n, "", false, None, conclude);
                     app.book_ui.confirm_blank = false;
-                    app.start_generation(n, false, prompt);
+                    app.start_generation(n, false, conclude, prompt);
                 }
                 if ui.button("No, let me add direction").clicked() {
                     app.book_ui.confirm_blank = false;
@@ -335,8 +337,26 @@ this chapter?",
         return;
     }
 
-    // Generate-next-chapter block (gated on all chapters being typed).
-    if n_chapters == 0 || all_typed {
+    // Generate-next-chapter block (gated on all chapters being typed), or the finished
+    // state once the book is concluded.
+    if book.meta.concluded {
+        ui.group(|ui| {
+            ui.label(
+                egui::RichText::new("This book is finished.")
+                    .color(p.brass)
+                    .strong(),
+            );
+            ui.label(
+                egui::RichText::new(if all_typed {
+                    "Every chapter is typed. Export it, or rewrite any chapter if you like."
+                } else {
+                    "The final chapter is written; type it to bind the book. Rewrites are \
+still possible."
+                })
+                .color(p.ghost),
+            );
+        });
+    } else if n_chapters == 0 || all_typed {
         ui.group(|ui| {
             let next_n = n_chapters + 1;
             ui.label(
@@ -355,6 +375,10 @@ this chapter?",
                         .hint_text("One line, or leave blank for the author to decide."),
                 );
             });
+            ui.checkbox(
+                &mut app.book_ui.make_last,
+                "Make this chapter the last chapter of the book",
+            );
             if ui.button("Generate next chapter").clicked() {
                 let cont = app.book_ui.continuation.trim().to_string();
                 if cont.is_empty() {
@@ -362,8 +386,9 @@ this chapter?",
                     app.book_ui.confirm_blank = true;
                 } else {
                     // The author gets at most one clarifying turn per generation.
-                    let prompt = prompt::chapter_prompt(&book, next_n, &cont, true, None);
-                    app.start_generation(next_n, false, prompt);
+                    let conclude = app.book_ui.make_last;
+                    let prompt = prompt::chapter_prompt(&book, next_n, &cont, true, None, conclude);
+                    app.start_generation(next_n, false, conclude, prompt);
                 }
             }
         });
@@ -421,7 +446,7 @@ fn export_markdown(app: &mut App, book: &crate::core::book::store::Book) {
     let md = crate::core::book::export::export_markdown(book);
     let name = format!("{}.md", book.meta.slug);
     match write_download(&name, md.as_bytes()) {
-        Ok(path) => app.book_ui.status = Some(format!("Saved Markdown to {}", path.display())),
+        Ok(path) => app.book_ui.status = Some(finish_export(&path)),
         Err(e) => app.book_ui.status = Some(format!("Markdown export failed: {e}")),
     }
 }
@@ -431,12 +456,36 @@ fn export_pdf(app: &mut App, book: &crate::core::book::store::Book) {
         Ok(bytes) => {
             let name = format!("{}.pdf", book.meta.slug);
             match write_download(&name, &bytes) {
-                Ok(path) => app.book_ui.status = Some(format!("Saved PDF to {}", path.display())),
+                Ok(path) => app.book_ui.status = Some(finish_export(&path)),
                 Err(e) => app.book_ui.status = Some(format!("PDF export failed: {e}")),
             }
         }
         Err(e) => app.book_ui.status = Some(format!("PDF export failed: {e}")),
     }
+}
+
+/// Open the exported file with the system default viewer (detached, non-blocking) and
+/// build the status line. A failed open degrades to just showing the path.
+fn finish_export(path: &std::path::Path) -> String {
+    match open_with_default_app(path) {
+        Ok(()) => format!("Saved and opened {}", path.display()),
+        Err(e) => format!("Saved to {} (could not open a viewer: {e})", path.display()),
+    }
+}
+
+fn open_with_default_app(path: &std::path::Path) -> std::io::Result<()> {
+    let mut child = std::process::Command::new("xdg-open")
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    // Reap on a background thread so the viewer never blocks the UI and no zombie
+    // lingers; the viewer itself keeps running independently.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Write an export to the user's downloads-ish location (data_dir/exports), returning path.

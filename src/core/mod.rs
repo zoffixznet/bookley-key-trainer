@@ -6,6 +6,7 @@ pub mod claude_auth;
 pub mod config;
 pub mod keys;
 pub mod metrics;
+pub mod normalize;
 pub mod paths;
 pub mod session;
 pub mod stats_store;
