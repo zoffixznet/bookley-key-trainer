@@ -32,6 +32,10 @@ struct Args {
     /// Boot the app, render a few frames, save a screenshot to PATH, and exit.
     #[arg(long, hide = true, value_name = "PATH")]
     screenshot: Option<std::path::PathBuf>,
+
+    /// With --screenshot: which screen to capture (typing|books|settings|connect|results).
+    #[arg(long, hide = true, value_name = "NAME")]
+    screen: Option<String>,
 }
 
 fn main() {
@@ -58,6 +62,7 @@ fn main() {
     let config = Config::load_from(&bookley::core::config::config_path());
     let dev = args.dev;
     let screenshot = args.screenshot.clone();
+    let screen = args.screen.clone();
 
     // Try the default wgpu renderer first; fall back to glow (OpenGL) if the GPU stack
     // cannot initialize, and exit with a clear message if both fail.
@@ -65,12 +70,13 @@ fn main() {
         config.clone(),
         dev,
         screenshot.clone(),
+        screen.clone(),
         eframe::Renderer::Wgpu,
     ) {
         Ok(()) => {}
         Err(e) => {
             tracing::warn!("wgpu renderer failed ({e}); retrying with glow (OpenGL)");
-            if let Err(e2) = run_gui(config, dev, screenshot, eframe::Renderer::Glow) {
+            if let Err(e2) = run_gui(config, dev, screenshot, screen, eframe::Renderer::Glow) {
                 eprintln!(
                     "Could not initialize a GPU context (wgpu: {e}; glow: {e2}).\n\
 Bookley needs OpenGL or Vulkan. On X11/Wayland, check your graphics drivers."
@@ -85,6 +91,7 @@ fn run_gui(
     config: Config,
     dev: bool,
     screenshot: Option<std::path::PathBuf>,
+    screen: Option<String>,
     renderer: eframe::Renderer,
 ) -> Result<(), eframe::Error> {
     let icon =
@@ -112,6 +119,13 @@ fn run_gui(
             let runner = Arc::new(ClaudeRunner::new());
             let mut app = App::new(&cc.egui_ctx, config, dev, runner);
             app.screenshot_path = screenshot;
+            match screen.as_deref() {
+                Some("books") => app.screen = bookley::ui::app::Screen::Books,
+                Some("settings") => app.screen = bookley::ui::app::Screen::Settings,
+                Some("connect") => app.screen = bookley::ui::app::Screen::Connect,
+                Some("results") => app.screen = bookley::ui::app::Screen::Results,
+                _ => {}
+            }
             Ok(Box::new(app))
         }),
     )

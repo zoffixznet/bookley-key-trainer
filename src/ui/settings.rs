@@ -100,12 +100,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             {
                 changed = true;
             }
-            if ui
-                .checkbox(&mut app.config.sound, "Sound on keystroke")
-                .changed()
-            {
-                changed = true;
-            }
         });
 
         ui.group(|ui| {

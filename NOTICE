@@ -13,10 +13,9 @@ Only the word column is used; the dice-roll numbers were dropped.
 
 Fonts
 -----
-The app embeds any fonts found under assets/fonts/ at build time. If a font is
-added there, its name and open-source license (e.g. SIL Open Font License) must
-be recorded in this file. When no fonts are staged, the app falls back to
-egui's bundled fonts and no third-party font is distributed.
+No third-party font files are bundled; the app uses egui's built-in fonts
+(egui itself bundles them under their own open licenses). If a font is ever
+added under assets/ and embedded, record its name and license here.
 
 Reference: AI-writing idiosyncrasy taxonomy
 -------------------------------------------

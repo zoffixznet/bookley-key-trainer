@@ -34,6 +34,21 @@ each; newest at the bottom of each section.
   description-based auto-surfacing, and we do not trim/defer/summarize craft to save tokens.
   Redundancy between prompt and skill is intended. Tokens are explicitly not a concern.
 
+## Authentication (Connect Claude)
+
+- The in-app flow PTY-drives `claude setup-token` (not `claude auth login`): probing
+  v2.1.191 showed auth login has no localhost callback either (both are paste-code
+  flows), and setup-token is the one that yields a long-lived token the app can own.
+- The PTY is opened 500 columns wide so the authorize URL is never line-wrapped by the
+  terminal; scraping is ANSI-stripped substring/URL matching with generous timeouts and
+  explicit failure states, all tested against a fake PTY script.
+- The captured token is stored 0600 at `<config>/claude-oauth-token` and passed to every
+  child as CLAUDE_CODE_OAUTH_TOKEN (subscription auth). A CLI that is already signed in
+  is detected via `claude auth status --json` and skips the flow entirely.
+- If the `claude` binary is missing, Book mode shows a message pointing at the README's
+  `make install-claude` (installing a system package cannot be done from inside the app
+  without sudo); signing in never requires a terminal.
+
 ## Compliance
 
 - Anthropic ToS: their SDK docs say third-party developers may not offer claude.ai
@@ -45,6 +60,12 @@ each; newest at the bottom of each section.
 - We never set `ANTHROPIC_API_KEY` in the spawned child env (sanitized out) and never use
   `--bare`, keeping generation on the subscription. Verified via `apiKeySource:"none"` in
   a real init event.
+- Re-checked support.claude.com/en/articles/15036540 on 2026-07-10: the planned move of
+  Agent SDK / `claude -p` usage to separate credits is paused; subscription draw remains
+  in effect, as this app assumes.
+- One real `make live-book-smoke` run was performed on 2026-07-10 (Opus) to verify the
+  live path end to end; it passed and consumed a small amount of subscription usage. All
+  other tests use the fake CLI.
 
 ## Fonts / assets
 
@@ -53,6 +74,29 @@ each; newest at the bottom of each section.
   `assets/fonts/`; otherwise it falls back to egui's bundled fonts and applies the palette
   + sizing so the identity still reads. Any embedded font's license is recorded in NOTICE.
   (See NOTICE / README for the current state.)
+
+## UI / behavior
+
+- Stop-on-word is distinct from stop-on-letter: wrong letters advance within the word,
+  but the word boundary (space/newline) blocks, even on a correct press, until the word
+  is fixed with backspace. The blocked boundary press is counted as an error keystroke.
+- The one clarifying turn is allowed for any chapter when the user gave direction; a
+  confirmed-blank generation forbids asking, per the spec. The answer turn always
+  disables further questions.
+- For 100%-AI books (blank title), chapter 1's prompt asks the author to emit
+  `BOOK-TITLE: ...` at the top of the bible; the app adopts it as the book title.
+- Exports are written to `<data>/exports/<slug>.{md,pdf}` and the app shows the exact
+  path; no native save dialog (keeps dependencies down, and the location is stable).
+- Resuming a partially typed chapter restarts that chapter (per-chapter done state is
+  what gates generation); chapters are 400-900 words, so the cost is minutes.
+- No audio subsystem shipped, so there is no sound toggle in Settings (a dead toggle is
+  worse than none); the config field remains and persists for forward compatibility.
+- Space is matched via egui Text events only (it produces one); Enter/Tab via key events
+  (they do not). Matching both would double-count Space.
+- Dev shortcuts: F9 auto-type (repeat-friendly), F10 completes a ~200-item "page", F12
+  completes the whole target. F9/F10/F12 are excluded from the Random pool.
+- Hidden `--screenshot PATH [--screen NAME]` flags boot the real app, render frames, and
+  save a PNG; used to verify X11 rendering from scripts without a human watching.
 
 ## Content / metrics
 

@@ -629,6 +629,12 @@ impl App {
         if book.meta.session_id.is_none() {
             book.meta.session_id = session_id;
         }
+        // 100%-AI books: adopt the title the author invented (BOOK-TITLE in the bible).
+        if book.meta.title.trim().is_empty() {
+            if let Some(t) = crate::core::book::prompt::book_title_from_bible(bible) {
+                book.meta.title = t;
+            }
+        }
         if let Err(e) = book.write_chapter(n, title, prose, bible) {
             self.book_ui.status = Some(format!("Failed to save the chapter: {e}"));
             return;

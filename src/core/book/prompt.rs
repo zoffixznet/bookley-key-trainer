@@ -85,6 +85,12 @@ in your system prompt and in the skill you just invoked).\n\n"
             "This is the first chapter. Establish voice, POV, tense, setting, and a \
 protagonist with a concrete want and a concrete obstacle. Open in a scene.\n\n",
         );
+        if meta.title.trim().is_empty() {
+            p.push_str(
+                "The book has no title yet: choose one and put it on the FIRST line of \
+the ===BIBLE=== block as `BOOK-TITLE: <your title>`.\n\n",
+            );
+        }
     } else {
         p.push_str(&format!(
             "This continues an existing book. You are writing chapter {n}. Keep continuity \
@@ -317,6 +323,20 @@ pub fn parse_reply(raw: &str) -> ParsedReply {
     ParsedReply::Fallback(text.to_string())
 }
 
+/// Extract an agent-invented book title from a bible ("BOOK-TITLE: ..." line), if any.
+pub fn book_title_from_bible(bible: &str) -> Option<String> {
+    for line in bible.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', ' ']);
+        if let Some(rest) = line.strip_prefix("BOOK-TITLE:") {
+            let t = rest.trim();
+            if !t.is_empty() {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Return the text strictly between the first `start` and the following `end` marker.
 fn between<'a>(hay: &'a str, start: &str, end: &str) -> Option<&'a str> {
     let s = hay.find(start)? + start.len();
@@ -398,6 +418,19 @@ More prose.\n===BIBLE===\nCAST: Mara\n===END===\njunk after";
             ParsedReply::Fallback(p) => assert_eq!(p, raw),
             other => panic!("expected fallback, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn blank_title_asks_for_book_title_and_parses_it() {
+        let store = tmp_store();
+        let book = store.create("", "English", "", true).unwrap();
+        let p = chapter_prompt(&book, 1, "", false, None);
+        assert!(p.contains("BOOK-TITLE:"));
+        assert_eq!(
+            book_title_from_bible("BOOK-TITLE: The Salt Road\nCAST: A"),
+            Some("The Salt Road".to_string())
+        );
+        assert_eq!(book_title_from_bible("CAST: A"), None);
     }
 
     #[test]

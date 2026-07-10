@@ -133,3 +133,30 @@ hicolor layout under `assets/`. Window icon set at runtime from the 256 PNG byte
 5. Icon: SVG + generator + desktop wiring + runtime window icon.
 6. Smoke: `--smoke`, fake claude, live-book-smoke target.
 7. README + final DoD pass, full suite green, final commit.
+
+## Addendum: revised-spec work (second session)
+
+The spec was revised mid-build; this is the plan the finished code follows for the new
+requirements, verified against the live CLI on this box (v2.1.191):
+
+- In-app Connect Claude auth. Probes: `claude setup-token` under a PTY prints the OAuth
+  authorize URL (line-wrapped at the terminal width, so the app opens the PTY 500 cols
+  wide) and then prompts "Paste code here if prompted >". `claude auth login` on this CLI
+  version is ALSO a paste-code flow (no localhost callback), and setup-token is the one
+  that hands us a long-lived `sk-ant-oat...` token, so setup-token is the implemented
+  mechanism. `core/claude_auth.rs` PTY-drives it via `portable-pty` (ANSI-stripping
+  scraper, defensive matching, 15-minute overall timeout, cancel path), stores the token
+  0600 under the config dir, and every spawned child gets `CLAUDE_CODE_OAUTH_TOKEN`.
+  Auth state checks (`claude auth status --json`, 20s bounded wait) run on background
+  threads; auth-shaped generation failures reopen the Connect screen. The whole flow is
+  covered by tests and the smoke run against `tests/fake_claude.sh`'s setup-token mode.
+- Generation hardening: every run has an app-side timeout plus a watchdog thread that
+  kills the child on cancel/timeout (verified against a hanging fake), stderr is
+  captured to classify auth-shaped nonzero exits, and the UI has a Cancel button.
+- Opus is the default model (`--model opus` verified to resolve to claude-opus-4-8 with
+  a trivial real run); the Settings picker offers opus/sonnet/haiku/fable.
+- `make install-claude`: Anthropic's official APT repo on Debian/Ubuntu, idempotent,
+  opt-in, sudo; native-installer fallback when apt is absent.
+- Verification tooling: `--smoke` (headless e2e incl. the connect flow), `--screenshot
+  PATH [--screen NAME]` (real windowed render captured to PNG, verified on X11), and one
+  successful `make live-book-smoke` run with real Opus on 2026-07-10.
