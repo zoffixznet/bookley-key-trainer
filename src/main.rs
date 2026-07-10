@@ -11,7 +11,7 @@ use bookley::ui::app::App;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "bookley",
+    name = "bookley-key-trainer",
     about = "Bookley Key Trainer: type your way through a novel"
 )]
 struct Args {
@@ -69,6 +69,10 @@ fn main() {
         )
         .with_writer(std::io::stderr)
         .init();
+
+    // Rename legacy "bookleykeytrainer" config/data dirs to the current
+    // "bookley-key-trainer" names before anything reads them (books move with it).
+    bookley::core::paths::migrate_legacy_dirs();
 
     if args.smoke {
         match bookley::smoke::run(args.live) {
@@ -164,8 +168,10 @@ fn run_gui(
     shot: ShotOpts,
     renderer: eframe::Renderer,
 ) -> Result<(), eframe::Error> {
-    let icon =
-        eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/bookley-256.png")).ok();
+    let icon = eframe::icon_data::from_png_bytes(include_bytes!(
+        "../assets/icon/bookley-key-trainer-256.png"
+    ))
+    .ok();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Bookley Key Trainer")
@@ -173,7 +179,7 @@ fn run_gui(
         // Wide enough that the top bar's tabs and right cluster can never collide
         // (the bar also drops its eyebrow labels below ~1235px).
         .with_min_inner_size([1120.0, 640.0])
-        .with_app_id("bookley");
+        .with_app_id("bookley-key-trainer");
     if let Some(icon) = icon {
         viewport = viewport.with_icon(Arc::new(icon));
     }

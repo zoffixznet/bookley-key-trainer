@@ -280,3 +280,15 @@ each; newest at the bottom of each section.
   clicks never bury the card), exports (viewer opens; content is title + chapters
   only), and the whole reopen-last-book flow (launch lands on the typing stage of the
   next chapter with the gate armed).
+
+## Naming (round 7)
+
+- Everything the app puts on a user's machine now uses the full name
+  bookley-key-trainer: the installed binary, the desktop entry (Exec/Icon/WMClass), the
+  hicolor icons, the app id, and the XDG config/data dirs
+  (~/.config/bookley-key-trainer, ~/.local/share/bookley-key-trainer). Legacy
+  "bookleykeytrainer" dirs are renamed automatically at launch (same-filesystem rename;
+  books move with it; on failure the legacy dir is left untouched). make install and
+  make uninstall also remove pre-rename bookley-named binary/desktop/icons so upgrades
+  never leave stale copies. The Cargo package/lib name stays "bookley"; only the bin
+  target is renamed.

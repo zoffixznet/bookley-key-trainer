@@ -26,12 +26,13 @@ To install for your user (so the clone can be deleted afterwards):
 make install
 ```
 
-That puts a single self-contained binary at `~/.local/bin/bookley` (fonts, sounds, the
-word list, and the novelist plugin are all embedded) plus a desktop entry and icons.
-Make sure `~/.local/bin` is on your PATH. Installing a newer version over an old one
-replaces those same files; `make uninstall` removes exactly them. Your books, settings,
-and stats live under `~/.local/share/bookleykeytrainer` and `~/.config`, and are never
-touched by install or uninstall.
+That puts a single self-contained binary at `~/.local/bin/bookley-key-trainer` (fonts,
+sounds, the word list, and the novelist plugin are all embedded) plus a desktop entry
+and icons. Make sure `~/.local/bin` is on your PATH. Installing a newer version over an
+old one replaces those same files (including any pre-rename `bookley`-named copies);
+`make uninstall` removes exactly them. Your books, settings, and stats live under
+`~/.local/share/bookley-key-trainer` and `~/.config`, and are never touched by install
+or uninstall.
 
 ## What's inside
 
@@ -82,7 +83,9 @@ text and book chapters; the book files on disk and the exports keep the original
 Unicode. The default theme is the light "foolscap" one; a saved theme choice wins.
 
 Settings, stats, and books persist in the XDG directories
-(`~/.config/bookleykeytrainer`, `~/.local/share/bookleykeytrainer`; exact paths vary by
+(`~/.config/bookley-key-trainer`, `~/.local/share/bookley-key-trainer`; legacy
+`bookleykeytrainer` folders from older builds are renamed automatically at launch;
+exact paths vary by
 platform conventions).
 
 ## Book mode
@@ -140,7 +143,7 @@ billing; usage draws from your subscription.
 
 ## Developer mode
 
-`make dev` (or `bookley --dev`) enables developer shortcuts and shows a DEV badge:
+`make dev` (or `bookley-key-trainer --dev`) enables developer shortcuts and shows a DEV badge:
 
 - **F9**: auto-type the next expected key (hold it to type through a whole chapter).
 - **F10**: complete the current page of text.
@@ -167,7 +170,7 @@ Random mode excludes F9/F10/F12 from its key pool so the shortcuts never collide
 
 ## Icon and desktop entry
 
-The icon source is `assets/icon/bookley.svg`; `make icons` regenerates the PNGs (hicolor
+The icon source is `assets/icon/bookley-key-trainer.svg`; `make icons` regenerates the PNGs (hicolor
 layout plus the embedded window icon) via the `gen-icons` helper binary.
 `make desktop-install` installs the `.desktop` entry and icons for the current user.
 

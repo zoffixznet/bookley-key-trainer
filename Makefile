@@ -13,10 +13,14 @@ FAKE_CLAUDE := $(abspath tests/fake_claude.sh)
 # replace and `make uninstall` knows exactly what to remove. The binary is fully
 # self-contained (fonts, sounds, word list, and the novelist plugin are embedded; the
 # plugin re-stages itself into the data dir at runtime). User data (books, settings,
-# stats) lives under ~/.config and ~/.local/share/bookleykeytrainer and is NEVER
+# stats) lives under ~/.config and ~/.local/share/bookley-key-trainer and is NEVER
 # touched by install or uninstall. Books especially are sacred.
-INSTALL_BIN := $(HOME)/.local/bin/bookley
-INSTALL_DESKTOP := $(HOME)/.local/share/applications/bookley.desktop
+INSTALL_BIN := $(HOME)/.local/bin/bookley-key-trainer
+INSTALL_DESKTOP := $(HOME)/.local/share/applications/bookley-key-trainer.desktop
+# Pre-rename installs used the short "bookley" name; install and uninstall clean those
+# up too so an upgrade never leaves stale copies behind.
+LEGACY_BIN := $(HOME)/.local/bin/bookley
+LEGACY_DESKTOP := $(HOME)/.local/share/applications/bookley.desktop
 ICON_SIZES := 16 32 48 64 128 256
 
 help: ## List every target with a one-line description
@@ -54,30 +58,36 @@ lint: ## cargo clippy + rustfmt check
 	$(CARGO) clippy --all-targets -- -D warnings
 	$(CARGO) fmt --check
 
-icons: ## Regenerate icon PNGs (hicolor layout + window icon) from assets/icon/bookley.svg
+icons: ## Regenerate icon PNGs (hicolor layout + window icon) from assets/icon/bookley-key-trainer.svg
 	$(CARGO) run --bin gen-icons
 
 screenshot: ## Boot the app, render a few frames, save smoke-screenshot.png, exit
 	$(CARGO) run -- --screenshot smoke-screenshot.png
 
 install: build ## Install for the current user: ~/.local/bin binary, desktop entry, icons (never touches books/settings)
-	@rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP)
-	@for s in $(ICON_SIZES); do rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; done
-	install -Dm755 target/release/bookley $(INSTALL_BIN)
-	install -Dm644 assets/bookley.desktop $(INSTALL_DESKTOP)
+	@rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP) $(LEGACY_BIN) $(LEGACY_DESKTOP)
 	@for s in $(ICON_SIZES); do \
-		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley.png \
+		rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
 			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; \
+	done
+	install -Dm755 target/release/bookley-key-trainer $(INSTALL_BIN)
+	install -Dm644 assets/bookley-key-trainer.desktop $(INSTALL_DESKTOP)
+	@for s in $(ICON_SIZES); do \
+		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
+			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png; \
 	done
 	@echo "Installed $(INSTALL_BIN) plus the desktop entry and icons."
 	@echo "The binary is self-contained: the cloned repo can be deleted."
 	@echo "Make sure ~/.local/bin is on your PATH."
-	@echo "Your books, settings, and stats live under ~/.local/share/bookleykeytrainer"
+	@echo "Your books, settings, and stats live under ~/.local/share/bookley-key-trainer"
 	@echo "and ~/.config, and are never touched by install or uninstall."
 
 uninstall: ## Remove the installed binary, desktop entry, and icons. Books/settings/stats are NEVER removed
-	rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP)
-	@for s in $(ICON_SIZES); do rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; done
+	rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP) $(LEGACY_BIN) $(LEGACY_DESKTOP)
+	@for s in $(ICON_SIZES); do \
+		rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
+			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; \
+	done
 	@echo "Removed the app. Your books, settings, and stats remain untouched."
 
 install-claude: ## Install the Claude Code CLI from Anthropic's APT repo (Debian/Ubuntu, uses sudo; no-op if present)
@@ -97,10 +107,10 @@ install-claude: ## Install the Claude Code CLI from Anthropic's APT repo (Debian
 	@echo "Done. Authenticate inside the app: Book mode -> Connect Claude."
 
 desktop-install: ## Install the .desktop entry and icons for the current user (~/.local/share)
-	install -Dm644 assets/bookley.desktop $(HOME)/.local/share/applications/bookley.desktop
-	@for s in 16 32 48 64 128 256; do \
-		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley.png \
-			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; \
+	install -Dm644 assets/bookley-key-trainer.desktop $(INSTALL_DESKTOP)
+	@for s in $(ICON_SIZES); do \
+		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
+			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png; \
 	done
 	@echo "Installed. You may need to refresh your desktop's icon cache."
 

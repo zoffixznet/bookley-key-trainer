@@ -4,10 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Bookley Key Trainer: a typing-speed trainer that writes a novel as you practice"
 license = "MIT"
-default-run = "bookley"
+default-run = "bookley-key-trainer"
 
 [[bin]]
-name = "bookley"
+name = "bookley-key-trainer"
 path = "src/main.rs"
 
 [[bin]]

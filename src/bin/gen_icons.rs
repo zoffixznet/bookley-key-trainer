@@ -4,7 +4,7 @@
 use resvg::tiny_skia;
 use resvg::usvg;
 
-const SVG: &str = include_str!("../../assets/icon/bookley.svg");
+const SVG: &str = include_str!("../../assets/icon/bookley-key-trainer.svg");
 const SIZES: [u32; 6] = [16, 32, 48, 64, 128, 256];
 
 fn main() {
@@ -21,7 +21,7 @@ fn main() {
 
         let dir = out_root.join(format!("{size}x{size}")).join("apps");
         std::fs::create_dir_all(&dir).expect("mkdir");
-        let path = dir.join("bookley.png");
+        let path = dir.join("bookley-key-trainer.png");
         pixmap.save_png(&path).expect("save png");
         println!("wrote {}", path.display());
     }
@@ -35,7 +35,7 @@ fn main() {
         &mut pixmap.as_mut(),
     );
     pixmap
-        .save_png("assets/icon/bookley-256.png")
+        .save_png("assets/icon/bookley-key-trainer-256.png")
         .expect("save window icon");
-    println!("wrote assets/icon/bookley-256.png");
+    println!("wrote assets/icon/bookley-key-trainer-256.png");
 }
