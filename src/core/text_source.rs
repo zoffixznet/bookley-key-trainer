@@ -285,9 +285,11 @@ mod tests {
         for d in keys::DEV_KEYS {
             assert!(!src.pool().contains(&d), "dev key {d:?} leaked into pool");
         }
-        // Pool still has plenty of keys including non-character ones.
+        // Pool still has plenty of keys including non-character ones. Backspace is an
+        // ordinary drillable key in Random mode.
         assert!(src.pool().contains(&Key::A));
         assert!(src.pool().contains(&Key::ArrowUp));
+        assert!(src.pool().contains(&Key::Backspace));
     }
 
     #[test]

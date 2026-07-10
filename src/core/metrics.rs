@@ -27,11 +27,17 @@ pub struct WpmSample {
 }
 
 /// Per-key accuracy and latency accumulator, used for the heatmap and adaptive weighting.
+///
+/// Attribution rule: every keystroke is booked against the key that was EXPECTED at that
+/// moment, so "errors" means "errors made while this key was expected". Latency is the
+/// inter-keystroke interval ending in the correct press of this key; the first keystroke
+/// of a session has no previous keystroke and contributes no latency sample.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct KeyStat {
     pub presses: u32,
     pub errors: u32,
-    /// Sum of inter-keystroke latency in milliseconds (only for correct presses).
+    /// Sum of inter-keystroke latency in milliseconds (only for correct presses that had
+    /// a previous keystroke to measure from).
     pub total_latency_ms: f64,
     pub latency_samples: u32,
 }
@@ -44,11 +50,12 @@ impl KeyStat {
             (self.presses - self.errors) as f64 / self.presses as f64
         }
     }
-    pub fn avg_latency_ms(&self) -> f64 {
+    /// Average latency, or `None` when there is no data (never a fake 0ms).
+    pub fn avg_latency_ms(&self) -> Option<f64> {
         if self.latency_samples == 0 {
-            0.0
+            None
         } else {
-            self.total_latency_ms / self.latency_samples as f64
+            Some(self.total_latency_ms / self.latency_samples as f64)
         }
     }
 }
@@ -79,12 +86,14 @@ impl Metrics {
         Self::default()
     }
 
-    /// Record a keystroke against an expected physical key.
+    /// Record exactly one keystroke against the key that was EXPECTED at that moment.
     ///
-    /// `correct` = whether it matched the expected character/key.
-    /// `key` = the physical key pressed (for per-key stats); `latency_ms` = time since the
-    /// previous keystroke (used for per-key latency of correct presses).
-    pub fn record_keystroke(&mut self, key: Option<Key>, correct: bool, latency_ms: f64) {
+    /// `correct` = whether the input matched the expected character/key.
+    /// `key` = the physical key that was expected (per-key stats attribution).
+    /// `latency_ms` = time since the previous keystroke, or `None` for the first keystroke
+    /// of the session (no previous keystroke to measure from). Latency accumulates only on
+    /// correct presses.
+    pub fn record_keystroke(&mut self, key: Option<Key>, correct: bool, latency_ms: Option<f64>) {
         self.total_keystrokes += 1;
         self.typed_chars += 1;
         if correct {
@@ -97,8 +106,8 @@ impl Metrics {
             e.presses += 1;
             if !correct {
                 e.errors += 1;
-            } else {
-                e.total_latency_ms += latency_ms;
+            } else if let Some(lat) = latency_ms {
+                e.total_latency_ms += lat;
                 e.latency_samples += 1;
             }
         }
@@ -201,14 +210,15 @@ pub struct SessionResult {
     pub error_keystrokes: u32,
     pub samples: Vec<WpmSample>,
     /// Per-key errors and average latency for the heatmap, keyed by a stable label.
-    pub per_key: Vec<(String, u32, u32, f64)>, // (label, presses, errors, avg_latency_ms)
+    /// Latency is `None` when the key has no measured samples (never a fake 0ms).
+    pub per_key: Vec<(String, u32, u32, Option<f64>)>, // (label, presses, errors, avg_latency_ms)
     pub when: String,
     pub mode: String,
 }
 
 impl SessionResult {
     pub fn from_metrics(m: &Metrics, mode: &str) -> Self {
-        let mut per_key: Vec<(String, u32, u32, f64)> = m
+        let mut per_key: Vec<(String, u32, u32, Option<f64>)> = m
             .per_key
             .iter()
             .map(|(k, s)| {
@@ -256,7 +266,7 @@ mod tests {
         // 25 correct chars in 60 seconds = 25/5 / 1 min = 5 wpm.
         let mut m = Metrics::new();
         for _ in 0..25 {
-            m.record_keystroke(Some(Key::A), true, 100.0);
+            m.record_keystroke(Some(Key::A), true, Some(100.0));
         }
         m.tick(60.0);
         assert!((m.wpm() - 5.0).abs() < 1e-6, "wpm was {}", m.wpm());
@@ -266,10 +276,10 @@ mod tests {
     fn raw_counts_all_typed() {
         let mut m = Metrics::new();
         for _ in 0..20 {
-            m.record_keystroke(Some(Key::A), true, 50.0);
+            m.record_keystroke(Some(Key::A), true, Some(50.0));
         }
         for _ in 0..10 {
-            m.record_keystroke(Some(Key::B), false, 50.0);
+            m.record_keystroke(Some(Key::B), false, Some(50.0));
         }
         m.tick(60.0);
         // correct = 20 -> wpm 4; typed = 30 -> raw 6.
@@ -281,7 +291,7 @@ mod tests {
     fn accuracy_all_errors() {
         let mut m = Metrics::new();
         for _ in 0..10 {
-            m.record_keystroke(Some(Key::A), false, 50.0);
+            m.record_keystroke(Some(Key::A), false, Some(50.0));
         }
         m.tick(30.0);
         assert_eq!(m.accuracy(), 0.0);
@@ -293,10 +303,10 @@ mod tests {
     fn accuracy_half() {
         let mut m = Metrics::new();
         for _ in 0..5 {
-            m.record_keystroke(Some(Key::A), true, 50.0);
+            m.record_keystroke(Some(Key::A), true, Some(50.0));
         }
         for _ in 0..5 {
-            m.record_keystroke(Some(Key::B), false, 50.0);
+            m.record_keystroke(Some(Key::B), false, Some(50.0));
         }
         m.tick(30.0);
         assert!((m.accuracy() - 0.5).abs() < 1e-9);
@@ -307,8 +317,8 @@ mod tests {
         let mut m = Metrics::new();
         // Feed a steady stream: same chars per equal window.
         for step in 1..=30 {
-            m.record_keystroke(Some(Key::A), true, 100.0);
-            m.record_keystroke(Some(Key::A), true, 100.0);
+            m.record_keystroke(Some(Key::A), true, Some(100.0));
+            m.record_keystroke(Some(Key::A), true, Some(100.0));
             m.tick(step as f64); // 2 chars per second, steady
         }
         // A perfectly steady rate should score high consistency.
@@ -318,12 +328,27 @@ mod tests {
     #[test]
     fn per_key_tracks_errors_and_latency() {
         let mut m = Metrics::new();
-        m.record_keystroke(Some(Key::E), true, 120.0);
-        m.record_keystroke(Some(Key::E), false, 500.0);
+        m.record_keystroke(Some(Key::E), true, Some(120.0));
+        m.record_keystroke(Some(Key::E), false, Some(500.0));
         let s = &m.per_key[&Key::E];
         assert_eq!(s.presses, 2);
         assert_eq!(s.errors, 1);
         assert!((s.accuracy() - 0.5).abs() < 1e-9);
-        assert!((s.avg_latency_ms() - 120.0).abs() < 1e-6);
+        // Only the correct press contributes a latency sample.
+        assert!((s.avg_latency_ms().unwrap() - 120.0).abs() < 1e-6);
+    }
+
+    /// The first keystroke of a session has no previous keystroke: it must not create a
+    /// latency sample, and a key with no samples reports None (never a fake 0ms).
+    #[test]
+    fn first_keystroke_contributes_no_latency() {
+        let mut m = Metrics::new();
+        m.record_keystroke(Some(Key::A), true, None);
+        assert_eq!(m.per_key[&Key::A].latency_samples, 0);
+        assert_eq!(m.per_key[&Key::A].avg_latency_ms(), None);
+        // A wrong press never contributes latency either, even with a measured interval.
+        m.record_keystroke(Some(Key::B), false, Some(300.0));
+        assert_eq!(m.per_key[&Key::B].avg_latency_ms(), None);
+        assert_eq!(m.per_key[&Key::B].errors, 1);
     }
 }

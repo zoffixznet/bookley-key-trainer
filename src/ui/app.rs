@@ -462,97 +462,20 @@ impl App {
 
         // Collect events first to avoid borrow conflicts.
         let events: Vec<Event> = ctx.input(|i| i.events.clone());
-        let mut completed = false;
-
-        for ev in events {
-            match ev {
-                Event::Key {
-                    key,
-                    physical_key,
-                    pressed,
-                    repeat,
-                    modifiers,
-                    ..
-                } => {
-                    if !pressed {
-                        continue;
-                    }
-                    // Feedback flash for the Shift caps (egui reports the modifier state,
-                    // not the modifier keypress itself).
-                    if modifiers.shift {
-                        self.flash.press_shift(now);
-                    }
-                    // Dev shortcuts.
-                    if self.dev_mode {
-                        if key == keys::DEV_AUTOTYPE || physical_key == Some(keys::DEV_AUTOTYPE) {
-                            if let Some(s) = self.session.as_mut() {
-                                if s.dev_autotype_next(now) == Progress::Complete {
-                                    completed = true;
-                                }
-                            }
-                            continue;
-                        }
-                        if !repeat
-                            && (key == keys::DEV_COMPLETE_PAGE
-                                || physical_key == Some(keys::DEV_COMPLETE_PAGE))
-                        {
-                            if let Some(s) = self.session.as_mut() {
-                                s.dev_complete_page(now);
-                                if s.is_complete() {
-                                    completed = true;
-                                }
-                            }
-                            continue;
-                        }
-                        if !repeat
-                            && (key == keys::DEV_COMPLETE_CHAPTER
-                                || physical_key == Some(keys::DEV_COMPLETE_CHAPTER))
-                        {
-                            if let Some(s) = self.session.as_mut() {
-                                s.dev_complete_all(now);
-                                completed = true;
-                            }
-                            continue;
-                        }
-                    }
-                    if repeat {
-                        continue;
-                    }
-                    // Feedback flash: record the just-pressed physical key.
-                    if let Some(pk) = physical_key {
-                        self.flash.press(pk, now);
-                    }
-                    // Non-character targets (Random mode arrows/function keys) and special
-                    // keys (Enter/Tab, which produce no Text event) are matched by
-                    // physical key. Space is NOT special: it produces a Text(" ") event,
-                    // so handling it here too would double-count it.
-                    if let Some(s) = self.session.as_mut() {
-                        let expected_is_char = s.expected().map(|e| e.is_char()).unwrap_or(false);
-                        let is_special = matches!(key, Key::Enter | Key::Tab);
-                        if key == Key::Backspace {
-                            s.backspace();
-                        } else if !expected_is_char || is_special {
-                            let pk = physical_key.unwrap_or(key);
-                            if s.input_physical_key(pk, now) == Progress::Complete {
-                                completed = true;
-                            }
-                        }
-                        // Character targets are advanced by the Text event below.
-                    }
-                }
-                Event::Text(t) => {
-                    for c in t.chars() {
-                        if let Some(s) = self.session.as_mut() {
-                            let expects_char = s.expected().map(|e| e.is_char()).unwrap_or(false);
-                            if expects_char && s.input_char(c, now) == Progress::Complete {
-                                completed = true;
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        // Random mode drills Backspace as an ordinary key; the other modes use it to
+        // correct mistakes.
+        let backspace_is_input = self.config.content_mode == ContentMode::Random;
+        let completed = match self.session.as_mut() {
+            Some(s) => feed_session_events(
+                s,
+                &mut self.flash,
+                &events,
+                now,
+                self.dev_mode,
+                backspace_is_input,
+            ),
+            None => false,
+        };
 
         if let Some(s) = self.session.as_mut() {
             s.metrics.tick(now);
@@ -881,6 +804,122 @@ impl eframe::App for App {
     }
 }
 
+/// Feed one frame's worth of keyboard events into the session. Pure with respect to the
+/// app (only the session and the flash animation state are touched), so the exact
+/// counting rules are unit-testable.
+///
+/// Counting rules:
+/// - Exactly one keystroke per physical press. Key auto-repeat is ignored: repeated `Key`
+///   events are dropped, and so is the `Text` event each of them produces (egui emits the
+///   `Key` event first, then its `Text`, so a repeat flags the next `Text` for skipping).
+/// - Character targets consume `Text` events; physical-key targets and the keys that
+///   produce no text (Enter/Tab) consume `Key` events. Space produces a `Text(" ")`, so
+///   it is never matched on the `Key` path (that would double-count it).
+/// - `backspace_is_input` (Random mode): Backspace is an ordinary drillable key. In every
+///   other mode it steps the cursor back to correct mistakes.
+///
+/// Returns whether the target was completed.
+pub(crate) fn feed_session_events(
+    session: &mut Session,
+    flash: &mut FlashState,
+    events: &[Event],
+    now: f64,
+    dev_mode: bool,
+    backspace_is_input: bool,
+) -> bool {
+    let mut completed = false;
+    // Set when the last Key event was an auto-repeat; the Text event it produced (which
+    // immediately follows it in the same frame) is skipped and the flag cleared.
+    let mut suppress_repeat_text = false;
+
+    for ev in events {
+        match ev {
+            Event::Key {
+                key,
+                physical_key,
+                pressed,
+                repeat,
+                modifiers,
+                ..
+            } => {
+                let (key, physical_key) = (*key, *physical_key);
+                if !pressed {
+                    continue;
+                }
+                // Feedback flash for the Shift caps (egui reports the modifier state,
+                // not the modifier keypress itself).
+                if modifiers.shift {
+                    flash.press_shift(now);
+                }
+                // Dev shortcuts.
+                if dev_mode {
+                    if key == keys::DEV_AUTOTYPE || physical_key == Some(keys::DEV_AUTOTYPE) {
+                        if session.dev_autotype_next(now) == Progress::Complete {
+                            completed = true;
+                        }
+                        continue;
+                    }
+                    if !repeat
+                        && (key == keys::DEV_COMPLETE_PAGE
+                            || physical_key == Some(keys::DEV_COMPLETE_PAGE))
+                    {
+                        session.dev_complete_page(now);
+                        if session.is_complete() {
+                            completed = true;
+                        }
+                        continue;
+                    }
+                    if !repeat
+                        && (key == keys::DEV_COMPLETE_CHAPTER
+                            || physical_key == Some(keys::DEV_COMPLETE_CHAPTER))
+                    {
+                        session.dev_complete_all(now);
+                        completed = true;
+                        continue;
+                    }
+                }
+                suppress_repeat_text = *repeat;
+                if *repeat {
+                    continue;
+                }
+                // Feedback flash: record the just-pressed physical key.
+                if let Some(pk) = physical_key {
+                    flash.press(pk, now);
+                }
+                // Non-character targets (Random mode arrows/function keys) and special
+                // keys (Enter/Tab, which produce no Text event) are matched by
+                // physical key. Space is NOT special: it produces a Text(" ") event,
+                // so handling it here too would double-count it.
+                let expected_is_char = session.expected().map(|e| e.is_char()).unwrap_or(false);
+                let is_special = matches!(key, Key::Enter | Key::Tab);
+                if key == Key::Backspace && !backspace_is_input {
+                    session.backspace();
+                } else if !expected_is_char || is_special {
+                    let pk = physical_key.unwrap_or(key);
+                    if session.input_physical_key(pk, now) == Progress::Complete {
+                        completed = true;
+                    }
+                }
+                // Character targets are advanced by the Text event below.
+            }
+            Event::Text(t) => {
+                if suppress_repeat_text {
+                    suppress_repeat_text = false;
+                    continue;
+                }
+                for c in t.chars() {
+                    let expects_char = session.expected().map(|e| e.is_char()).unwrap_or(false);
+                    if expects_char && session.input_char(c, now) == Progress::Complete {
+                        completed = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    completed
+}
+
 /// The top app bar: serif wordmark lockup, segmented content-mode tabs, and a tidy right
 /// cluster (keyboard mode, Books, Settings).
 fn top_bar(app: &mut App, ui: &mut egui::Ui) {
@@ -973,4 +1012,90 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::config::ErrorMode;
+    use crate::core::text_source::Target;
+
+    fn key_event(key: Key, repeat: bool) -> Event {
+        Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    fn text_event(s: &str) -> Event {
+        Event::Text(s.to_string())
+    }
+
+    fn feed(session: &mut Session, events: &[Event], backspace_is_input: bool) -> bool {
+        let mut flash = FlashState::default();
+        feed_session_events(session, &mut flash, events, 1.0, false, backspace_is_input)
+    }
+
+    /// One physical press produces a Key event AND a Text event; exactly one keystroke
+    /// must be counted, attributed to the expected key.
+    #[test]
+    fn one_press_counts_exactly_once() {
+        let mut s = Session::new(Target::from_text("ab", "t"), ErrorMode::Off);
+        feed(&mut s, &[key_event(Key::X, false), text_event("x")], false);
+        assert_eq!(s.metrics.total_keystrokes, 1, "no double counting");
+        assert_eq!(s.metrics.error_keystrokes, 1);
+        // Attributed to the expected key (A), not the pressed one (X).
+        assert_eq!(s.metrics.per_key[&Key::A].errors, 1);
+        assert!(!s.metrics.per_key.contains_key(&Key::X));
+    }
+
+    /// Key auto-repeat (held key) must not spam keystrokes: repeated Key events are
+    /// dropped and so are the Text events they produce.
+    #[test]
+    fn key_repeat_is_not_counted() {
+        let mut s = Session::new(Target::from_text("aaa", "t"), ErrorMode::Off);
+        let events = vec![
+            key_event(Key::A, false),
+            text_event("a"),
+            key_event(Key::A, true),
+            text_event("a"),
+            key_event(Key::A, true),
+            text_event("a"),
+        ];
+        feed(&mut s, &events, false);
+        assert_eq!(s.metrics.total_keystrokes, 1, "repeats must be ignored");
+        assert_eq!(s.cursor, 1);
+    }
+
+    /// In Random mode Backspace is a drillable target: pressing it completes the item
+    /// instead of stepping the cursor back.
+    #[test]
+    fn backspace_is_a_target_in_random_mode() {
+        let mut s = Session::new(
+            Target::from_keys(vec![Key::Backspace, Key::F1], "r"),
+            ErrorMode::Letter,
+        );
+        let done = feed(&mut s, &[key_event(Key::Backspace, false)], true);
+        assert!(!done);
+        assert_eq!(s.cursor, 1, "Backspace completed its own item");
+        assert_eq!(s.metrics.correct_chars, 1);
+        assert_eq!(s.metrics.error_keystrokes, 0);
+        assert!(feed(&mut s, &[key_event(Key::F1, false)], true));
+    }
+
+    /// Outside Random mode Backspace still corrects: it steps back without counting a
+    /// keystroke.
+    #[test]
+    fn backspace_corrects_in_char_modes() {
+        let mut s = Session::new(Target::from_text("ab", "t"), ErrorMode::Off);
+        feed(&mut s, &[key_event(Key::X, false), text_event("x")], false);
+        assert_eq!(s.cursor, 1);
+        feed(&mut s, &[key_event(Key::Backspace, false)], false);
+        assert_eq!(s.cursor, 0, "backspace stepped back");
+        // The original error stays counted; backspace itself is not a keystroke.
+        assert_eq!(s.metrics.total_keystrokes, 1);
+    }
 }

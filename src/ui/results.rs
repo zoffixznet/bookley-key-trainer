@@ -244,7 +244,7 @@ fn wpm_graph(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionRe
 
 fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResult) {
     // Show up to the 12 worst keys (by errors then latency).
-    let mut keys: Vec<&(String, u32, u32, f64)> = r.per_key.iter().collect();
+    let mut keys: Vec<&(String, u32, u32, Option<f64>)> = r.per_key.iter().collect();
     keys.sort_by(|a, b| {
         b.2.cmp(&a.2)
             .then(b.3.partial_cmp(&a.3).unwrap_or(std::cmp::Ordering::Equal))
@@ -255,25 +255,14 @@ fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResu
         return;
     }
     ui.horizontal_wrapped(|ui| {
-        for (label, presses, errors, lat) in worst {
-            let err_rate = if *presses > 0 {
-                *errors as f32 / *presses as f32
-            } else {
-                0.0
-            };
-            let (fill, stroke) = if err_rate > 0.0 {
-                (
-                    p.ribbon.linear_multiply(0.10 + 0.25 * err_rate.min(1.0)),
-                    p.ribbon,
-                )
-            } else if *lat > 250.0 {
-                (p.brass.linear_multiply(0.15), p.brass)
-            } else {
-                (p.ink_850, p.edge)
+        for (label, _presses, errors, lat) in worst {
+            let lat_str = match lat {
+                Some(l) => format!("{l:.0} ms avg"),
+                None => "\u{2013}".to_string(),
             };
             egui::Frame::new()
-                .fill(fill)
-                .stroke(Stroke::new(1.0, stroke))
+                .fill(p.ink_850)
+                .stroke(Stroke::new(1.0, p.edge))
                 .corner_radius(CornerRadius::same(7))
                 .inner_margin(egui::Margin::symmetric(10, 6))
                 .show(ui, |ui| {
@@ -285,7 +274,7 @@ fn heatmap(ui: &mut egui::Ui, p: &Palette, r: &crate::core::metrics::SessionResu
                                 .color(p.paper),
                         );
                         ui.label(
-                            egui::RichText::new(format!("{errors} err \u{00B7} {lat:.0}ms"))
+                            egui::RichText::new(format!("{errors} errors \u{00B7} {lat_str}"))
                                 .font(theme::mono_font(11.0))
                                 .color(p.ghost),
                         );

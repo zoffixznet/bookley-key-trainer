@@ -66,7 +66,7 @@ mod tests {
     fn result(wpm_chars: u32, mode: &str) -> SessionResult {
         let mut m = Metrics::new();
         for _ in 0..wpm_chars {
-            m.record_keystroke(Some(Key::A), true, 100.0);
+            m.record_keystroke(Some(Key::A), true, Some(100.0));
         }
         m.tick(60.0);
         SessionResult::from_metrics(&m, mode)

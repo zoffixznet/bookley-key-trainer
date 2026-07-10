@@ -156,13 +156,14 @@ impl Session {
         self.cursor as f32 / self.target.len() as f32
     }
 
-    fn latency_ms(&mut self, now_secs: f64) -> f64 {
-        let dt = match self.last_keystroke_secs {
-            Some(prev) => (now_secs - prev) * 1000.0,
-            None => 0.0,
-        };
+    /// Inter-keystroke interval in ms, or `None` for the first keystroke of the session.
+    /// `now_secs` is active (pause-adjusted) time, so paused gaps never inflate latency.
+    fn latency_ms(&mut self, now_secs: f64) -> Option<f64> {
+        let dt = self
+            .last_keystroke_secs
+            .map(|prev| ((now_secs - prev) * 1000.0).max(0.0));
         self.last_keystroke_secs = Some(now_secs);
-        dt.max(0.0)
+        dt
     }
 
     /// Feed a produced character (from egui `Event::Text` or a physical char). `now_secs`
@@ -193,7 +194,9 @@ impl Session {
         // Only meaningful when the expected item is a physical key, or a char whose only
         // sensible input is a bare key (space/enter/tab handled by callers too).
         let correct = expected.physical_key() == Some(key);
-        self.apply(correct, Some(key), now_secs)
+        // Stats are attributed to the key that was EXPECTED at this moment, same as the
+        // char path, so "errors on E" means "errors made while E was expected".
+        self.apply(correct, expected.physical_key(), now_secs)
     }
 
     /// Whether the cursor is on a word boundary (space / newline).
@@ -275,6 +278,15 @@ impl Session {
             self.status[self.cursor] = CharStatus::Pending;
             self.complete = false;
         }
+    }
+
+    /// Reset the timer-dependent state (metrics, latency anchor) WITHOUT touching the
+    /// typing position: cursor, per-position status, and the target stay exactly as they
+    /// are. Used by the "Reset stats" control when a drill got interrupted mid-text.
+    pub fn reset_metrics(&mut self) {
+        self.metrics = Metrics::new();
+        self.last_keystroke_secs = None;
+        self.metrics.tick(0.0);
     }
 
     // ------- Dev-mode shortcuts -------
@@ -448,6 +460,90 @@ mod tests {
         assert!((paused.metrics.wpm() - control.metrics.wpm()).abs() < 1e-9);
         assert!((paused.metrics.consistency() - control.metrics.consistency()).abs() < 1e-9);
         assert_eq!(paused.metrics.correct_chars, control.metrics.correct_chars);
+    }
+
+    /// A known keystroke timeline in, expected per-key stats out:
+    ///   t=1.0  'a' correct   (first keystroke: no latency sample)
+    ///   t=1.4  'z' wrong     (expected 'b': error booked on B, no latency)
+    ///   t=1.9  'b' correct   (latency 500ms from the previous keystroke, booked on B)
+    #[test]
+    fn per_key_stats_from_keystroke_timeline() {
+        let mut s = Session::new(Target::from_text("ab", "t"), ErrorMode::Letter);
+        assert_eq!(s.input_char('a', 1.0), Progress::Advanced);
+        assert_eq!(s.input_char('z', 1.4), Progress::Blocked);
+        assert_eq!(s.input_char('b', 1.9), Progress::Complete);
+
+        let a = &s.metrics.per_key[&Key::A];
+        assert_eq!((a.presses, a.errors, a.latency_samples), (1, 0, 0));
+        assert_eq!(a.avg_latency_ms(), None, "first keystroke has no interval");
+
+        let b = &s.metrics.per_key[&Key::B];
+        assert_eq!((b.presses, b.errors), (2, 1), "one error, exactly once");
+        assert_eq!(b.latency_samples, 1, "only the correct press measures");
+        assert!((b.avg_latency_ms().unwrap() - 500.0).abs() < 1e-6);
+
+        // The wrong press was attributed to the EXPECTED key (B), not the pressed key (Z).
+        assert!(!s.metrics.per_key.contains_key(&Key::Z));
+        assert_eq!(s.metrics.error_keystrokes, 1);
+        assert_eq!(s.metrics.total_keystrokes, 3);
+    }
+
+    /// Same attribution rule on the physical-key path (Random mode): a wrong press is an
+    /// error on the key that was expected, and its correct press carries the latency.
+    #[test]
+    fn physical_key_stats_attributed_to_expected() {
+        let mut s = Session::new(
+            Target::from_keys(vec![Key::ArrowUp, Key::PageDown], "r"),
+            ErrorMode::Letter,
+        );
+        assert_eq!(s.input_physical_key(Key::ArrowUp, 1.0), Progress::Advanced);
+        // Wrong key while PageDown is expected: error on PageDown, none on Escape.
+        assert_eq!(s.input_physical_key(Key::Escape, 1.3), Progress::Blocked);
+        assert_eq!(s.input_physical_key(Key::PageDown, 1.8), Progress::Complete);
+        let pd = &s.metrics.per_key[&Key::PageDown];
+        assert_eq!((pd.presses, pd.errors, pd.latency_samples), (2, 1, 1));
+        assert!((pd.avg_latency_ms().unwrap() - 500.0).abs() < 1e-6);
+        assert!(!s.metrics.per_key.contains_key(&Key::Escape));
+    }
+
+    /// Backspace is an ordinary drillable target on the physical-key path (Random mode).
+    #[test]
+    fn backspace_is_a_drillable_target() {
+        let mut s = Session::new(
+            Target::from_keys(vec![Key::Backspace, Key::A], "r"),
+            ErrorMode::Letter,
+        );
+        assert_eq!(
+            s.input_physical_key(Key::Backspace, 0.5),
+            Progress::Advanced
+        );
+        assert_eq!(s.input_physical_key(Key::A, 1.0), Progress::Complete);
+        assert_eq!(s.metrics.error_keystrokes, 0);
+    }
+
+    /// Reset stats zeroes the metrics but never the typing position.
+    #[test]
+    fn reset_metrics_keeps_position() {
+        let mut s = Session::new(Target::from_text("abcd", "t"), ErrorMode::Off);
+        s.input_char('a', 1.0);
+        s.input_char('x', 2.0); // wrong at 'b'
+        assert_eq!(s.cursor, 2);
+        assert_eq!(s.metrics.error_keystrokes, 1);
+
+        s.reset_metrics();
+        assert_eq!(s.cursor, 2, "position survives the reset");
+        assert_eq!(s.status[0], CharStatus::Correct);
+        assert_eq!(s.status[1], CharStatus::Wrong);
+        assert_eq!(s.metrics.total_keystrokes, 0);
+        assert_eq!(s.metrics.error_keystrokes, 0);
+        assert!(s.metrics.per_key.is_empty());
+
+        // Typing continues from the same spot; the first post-reset keystroke has no
+        // latency sample (the timing anchor was reset too).
+        assert_eq!(s.input_char('c', 3.0), Progress::Advanced);
+        assert_eq!(s.metrics.per_key[&Key::C].latency_samples, 0);
+        assert_eq!(s.input_char('d', 3.5), Progress::Complete);
+        assert_eq!(s.metrics.correct_chars, 2);
     }
 
     #[test]

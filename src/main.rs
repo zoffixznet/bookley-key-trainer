@@ -142,7 +142,8 @@ fn demo_result() -> bookley::core::metrics::SessionResult {
         t += period;
         let key = keys[(k as usize) % keys.len()];
         let wrong = k % 23 == 0 && (key == egui::Key::R || key == egui::Key::I);
-        m.record_keystroke(Some(key), !wrong, period * 1000.0);
+        let latency = if k == 0 { None } else { Some(period * 1000.0) };
+        m.record_keystroke(Some(key), !wrong, latency);
         m.tick(t);
     }
     bookley::core::metrics::SessionResult::from_metrics(&m, "word")
