@@ -61,20 +61,26 @@ pub fn export_markdown(book: &Book) -> String {
     book.export_markdown()
 }
 
+// The PDF carries book content only: an optional cover page, the title page, and the
+// chapters. Generation inputs (premise, language, continuation history) never appear.
 const PDF_TEMPLATE: &str = r##"#import sys: inputs
 
 #set document(title: inputs.title, author: "Bookley Key Trainer")
-#set page(paper: "a5", margin: (x: 2.2cm, y: 2.4cm), numbering: "1")
 #set text(size: 11pt, lang: "en")
 #set par(justify: true, leading: 0.72em, first-line-indent: 1.2em)
+
+// Cover: page one, full bleed, before everything else.
+#if inputs.cover != none {
+  set page(paper: "a5", margin: 0pt)
+  place(top + left, image(inputs.cover, width: 100%, height: 100%, fit: "cover"))
+}
+
+#set page(paper: "a5", margin: (x: 2.2cm, y: 2.4cm), numbering: "1")
+#counter(page).update(1)
 
 // Title page
 #align(center + horizon)[
   #text(size: 26pt, weight: "bold")[#inputs.title]
-  #v(1.2em)
-  #if inputs.language != "" [#text(size: 12pt, style: "italic")[in #inputs.language]]
-  #v(0.6em)
-  #if inputs.premise != "" [#text(size: 11pt, fill: rgb("#555555"))[#inputs.premise]]
 ]
 #pagebreak()
 
@@ -97,8 +103,11 @@ pub fn export_pdf(book: &Book) -> Result<Vec<u8>, String> {
     use typst_as_lib::TypstEngine;
 
     let title = super::store::display_title(&book.meta);
-    let language = book.meta.language.clone();
-    let premise = book.meta.premise.clone();
+    // Cover page (optional): the rasterized cover PNG stored with the book.
+    let cover_value = match std::fs::read(book.cover_path()) {
+        Ok(bytes) => typst::foundations::Bytes::new(bytes).into_value(),
+        Err(_) => Value::None,
+    };
 
     // Build chapter dicts: title + list of paragraph strings (from cleaned plain text).
     let mut chapters: Vec<Value> = Vec::new();
@@ -128,8 +137,7 @@ pub fn export_pdf(book: &Book) -> Result<Vec<u8>, String> {
 
     let mut input = Dict::new();
     input.insert("title".into(), title.into_value());
-    input.insert("language".into(), language.into_value());
-    input.insert("premise".into(), premise.into_value());
+    input.insert("cover".into(), cover_value);
     input.insert("chapters".into(), chapters.into_value());
 
     let engine = TypstEngine::builder()

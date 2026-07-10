@@ -69,6 +69,13 @@ impl Book {
     pub fn chapter_path(&self, n: usize) -> PathBuf {
         self.chapters_dir().join(format!("{n:02}.md"))
     }
+    /// The rasterized cover PNG, if one has been generated.
+    pub fn cover_path(&self) -> PathBuf {
+        self.dir.join("cover.png")
+    }
+    pub fn has_cover(&self) -> bool {
+        self.cover_path().exists()
+    }
 
     pub fn save(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
@@ -162,15 +169,12 @@ impl Book {
     }
 
     /// Concatenate all chapters into a single export Markdown with a title page.
+    /// Exports carry BOOK CONTENT only: the title and the chapters. The premise,
+    /// language, and continuation history are generation inputs; they stay in the
+    /// book's metadata for the AI and never appear in an export.
     pub fn export_markdown(&self) -> String {
         let mut out = String::new();
         out.push_str(&format!("# {}\n\n", display_title(&self.meta)));
-        if !self.meta.language.is_empty() {
-            out.push_str(&format!("*Language: {}*\n\n", self.meta.language));
-        }
-        if !self.meta.premise.trim().is_empty() {
-            out.push_str(&format!("> {}\n\n", self.meta.premise.trim()));
-        }
         out.push_str("---\n\n");
         for c in &self.meta.chapters {
             let prose = self.read_chapter(c.n).unwrap_or_default();
@@ -411,16 +415,22 @@ mod tests {
     }
 
     #[test]
-    fn export_markdown_has_title_and_chapters() {
+    fn export_markdown_has_title_and_chapters_and_no_prompt_material() {
         let root = tmp_root();
         let store = BookStore::new(root.clone());
-        let mut book = store.create("Salt", "English", "", false).unwrap();
+        let mut book = store
+            .create("Salt", "Esperanto", "A secret premise about a mine.", false)
+            .unwrap();
         book.write_chapter(1, "One", "Prose one.", "").unwrap();
         book.write_chapter(2, "Two", "Prose two.", "").unwrap();
         let md = book.export_markdown();
         assert!(md.starts_with("# Salt"));
         assert!(md.contains("## Chapter 1: One"));
         assert!(md.contains("Prose two."));
+        // Generation inputs are AI-side metadata, never book content.
+        assert!(!md.contains("secret premise"));
+        assert!(!md.contains("Esperanto"));
+        assert!(!md.to_lowercase().contains("language"));
         let _ = std::fs::remove_dir_all(&root);
     }
 
