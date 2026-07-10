@@ -30,3 +30,27 @@ Reference: AI-writing idiosyncrasy taxonomy
 -------------------------------------------
 The bundled novelist skill cites the LAMP-corpus taxonomy of AI-writing tics:
 arXiv:2409.14509. This is a citation only; no text from the paper is bundled.
+
+Typewriter key sounds
+---------------------
+The five WAVs under assets/sounds/ are CC0 (public-domain) recordings, embedded
+in the binary and played on each keypress. For this app they were trimmed to
+~0.22-0.25 s, converted to mono 16-bit 44.1 kHz WAV, and peak-normalized to
+about -3 dBFS.
+
+  key-click-1.wav, key-click-2.wav, key-click-3.wav
+    "Typewriter - single key - type 1/2/3" by yottasounds, from the
+    "typewriter" pack on Freesound:
+      https://freesound.org/people/yottasounds/sounds/380138/  (type 1)
+      https://freesound.org/people/yottasounds/sounds/380137/  (type 2)
+      https://freesound.org/people/yottasounds/sounds/380136/  (type 3)
+    License: CC0 1.0, https://creativecommons.org/publicdomain/zero/1.0/
+
+  key-deep-1.wav  "Typewriter, space" (#2843)
+  key-deep-2.wav  "Typewriter, Key" (#2842)
+    Hermes Precisa 305 recordings by Joseph Sardin, BigSoundBank:
+      https://bigsoundbank.com/typewriter-space-s2843.html
+      https://bigsoundbank.com/typewriter-key-s2842.html
+    License: CC0 / public-domain equivalent, https://bigsoundbank.com/licenses.html
+
+CC0 requires no attribution; the credits above are provided as a courtesy.

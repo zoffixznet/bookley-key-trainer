@@ -36,8 +36,9 @@ typst = "=0.15.0"
 typst-pdf = "=0.15.0"
 portable-pty = "=0.9.0"
 unicode-normalization = "=0.1.25"
-# Key sound: playback only (we synthesize the click PCM ourselves; no decoders needed).
-rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
+# Key sound: playback plus the WAV decoder for the bundled CC0 typewriter recordings
+# under assets/sounds/ (the synthesized click remains as a decode-failure fallback).
+rodio = { version = "=0.22.2", default-features = false, features = ["playback", "wav"] }
 
 [profile.release]
 opt-level = 2
