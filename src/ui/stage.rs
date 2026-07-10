@@ -169,8 +169,15 @@ fn start_gate_overlay(app: &mut App, ui: &mut egui::Ui, stage_rect: Rect) {
 
     // The scrim: dark and translucent on both themes; it eats clicks so nothing behind
     // the gate is reachable while the gate is up.
+    //
+    // The scrim MUST sit in a lower order class than the card. egui raises a clicked
+    // Area to the top of its own order class and remembers that z-order in Memory for
+    // the rest of the run, so with both in Order::Foreground a single click on the
+    // scrim buried the card underneath it (and made its duration buttons unclickable)
+    // until the app was restarted. Middle vs Foreground cannot be reordered against
+    // each other, no matter what gets clicked.
     egui::Area::new(egui::Id::new("start_gate_scrim"))
-        .order(egui::Order::Foreground)
+        .order(egui::Order::Middle)
         .fixed_pos(stage_rect.min)
         .show(&ctx, |ui| {
             ui.allocate_rect(stage_rect, Sense::click_and_drag());
@@ -181,8 +188,8 @@ fn start_gate_overlay(app: &mut App, ui: &mut egui::Ui, stage_rect: Rect) {
             );
         });
 
-    // The gate card, centered on the stage (later Areas of the same order paint on top
-    // of the scrim).
+    // The gate card, centered on the stage, in a strictly higher order class than the
+    // scrim (see above).
     let offset = stage_rect.center() - ctx.content_rect().center();
     egui::Area::new(egui::Id::new("start_gate_card"))
         .order(egui::Order::Foreground)

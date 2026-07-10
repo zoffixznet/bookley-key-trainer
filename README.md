@@ -20,6 +20,19 @@ Requirements: a Rust toolchain (https://rustup.rs), the usual Linux GUI librarie
 (`sudo apt install libasound2-dev` on Debian/Ubuntu). `make deps` sanity checks the
 toolchain and libraries.
 
+To install for your user (so the clone can be deleted afterwards):
+
+```
+make install
+```
+
+That puts a single self-contained binary at `~/.local/bin/bookley` (fonts, sounds, the
+word list, and the novelist plugin are all embedded) plus a desktop entry and icons.
+Make sure `~/.local/bin` is on your PATH. Installing a newer version over an old one
+replaces those same files; `make uninstall` removes exactly them. Your books, settings,
+and stats live under `~/.local/share/bookleykeytrainer` and `~/.config`, and are never
+touched by install or uninstall.
+
 ## What's inside
 
 Two independent axes define a practice session, both switchable at runtime from the top

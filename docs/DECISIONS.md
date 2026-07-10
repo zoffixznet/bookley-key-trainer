@@ -238,3 +238,45 @@ each; newest at the bottom of each section.
   exactly one prominent next-step block. The app remembers the last open book
   (config: last_book); Book-mode launches reopen it straight onto the typing stage with
   the Space gate armed.
+
+## Install and round-5 fixes
+
+- make install puts a single self-contained binary at ~/.local/bin/bookley plus the
+  desktop entry and hicolor icons, removing the previous copies of exactly those files
+  first; make uninstall removes the same fixed list and nothing else. Everything the app
+  needs at runtime is embedded (the novelist plugin re-stages itself into the data dir
+  on every launch, so upgrades refresh it). User data (books, settings, stats) is never
+  referenced by either target; books are sacred.
+- Start-gate overlay bug root cause: the scrim and the card were two Areas in the same
+  egui order class, and egui raises a clicked Area to the top of its class and persists
+  that z-order in Memory for the run, so one click on the scrim buried the card (and its
+  duration buttons) until restart, across mode switches. Fixed by putting the scrim in
+  Order::Middle and the card in Order::Foreground: different classes can never be
+  reordered against each other.
+- Open-book shelf tile: the badge and thicker border/spine changed tile geometry,
+  re-wrapped long titles, and misaligned the grid. The active cue is now a slightly
+  darker tile background plus the disabled "Opened" button, with identical geometry on
+  every tile.
+
+## Interactive hunt (round 6)
+
+- The app was driven end to end with real clicks and keystrokes (xdotool) on an
+  isolated Xvfb display, with a frame capture inspected after every step: gate-overlay
+  scrim clicks, the on-card duration picker, pause/resume with noise input while
+  paused, mid-drill mode switches, the paste flow, reset stats, results tooltips,
+  Enter-retype, book open/export/rewrite/type, kill-and-restart resume (log-verified:
+  "resuming ... at 72 of 3416 (rewound from 110)"), live theme switch, numpad toggle,
+  and window resizing.
+- Two real bugs found and fixed: (1) dev shortcuts (F9/F10/F12) recorded absurd
+  results into the real stats and personal bests (a 2871-wpm paste "PB"); any session
+  touched by a dev shortcut is now tainted, its results screen says "dev-assisted run:
+  not recorded", and nothing is written to stats or PBs (unit-tested). (2) At narrow
+  window widths the top bar's right cluster plowed over the mode tabs into an
+  unreadable mash; the bar now drops its SOUND/KEYBOARD eyebrow labels below ~1235px
+  and the window minimum inner size is 1120x640. The minimum is enforced by the window
+  manager; a WM-less X server (bare Xvfb) can still force smaller, which is a test-rig
+  artifact, not a desktop behavior.
+- Verified clean in the same session: the scrim/overlay z-order fix (repeated scrim
+  clicks never bury the card), exports (viewer opens; content is title + chapters
+  only), and the whole reopen-last-book flow (launch lands on the typing stage of the
+  next chapter with the gate armed).

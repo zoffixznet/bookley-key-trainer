@@ -83,6 +83,10 @@ pub struct Session {
     last_keystroke_secs: Option<f64>,
     /// Whether the target has been completed.
     complete: bool,
+    /// Set when any dev shortcut touched this session. Dev-assisted results are shown
+    /// but never recorded: an F12-completed chapter must not become a 2800-wpm
+    /// personal best in the real stats.
+    pub dev_assisted: bool,
 }
 
 impl Session {
@@ -98,6 +102,7 @@ impl Session {
             word_start: 0,
             last_keystroke_secs: None,
             complete: n == 0,
+            dev_assisted: false,
         }
     }
 
@@ -311,6 +316,7 @@ impl Session {
 
     /// Dev: register the currently-expected item as correctly typed and advance.
     pub fn dev_autotype_next(&mut self, now_secs: f64) -> Progress {
+        self.dev_assisted = true;
         if self.complete {
             return Progress::Complete;
         }
@@ -432,6 +438,17 @@ mod tests {
         s.dev_complete_all(1.0);
         assert!(s.is_complete(), "dev complete must not spin forever");
         assert!(!s.status.contains(&CharStatus::Wrong));
+    }
+
+    /// Dev shortcuts taint the session so its result is never recorded as a real
+    /// stat or personal best; ordinary typing must not taint.
+    #[test]
+    fn dev_shortcuts_taint_the_session() {
+        let mut s = Session::new(Target::from_text("ab", "t"), ErrorMode::Off);
+        s.input_char('a', 0.5);
+        assert!(!s.dev_assisted, "ordinary typing must not taint");
+        s.dev_autotype_next(1.0);
+        assert!(s.dev_assisted, "a dev shortcut must taint the session");
     }
 
     #[test]

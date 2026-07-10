@@ -170,7 +170,9 @@ fn run_gui(
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Bookley Key Trainer")
         .with_inner_size([1240.0, 900.0])
-        .with_min_inner_size([860.0, 600.0])
+        // Wide enough that the top bar's tabs and right cluster can never collide
+        // (the bar also drops its eyebrow labels below ~1235px).
+        .with_min_inner_size([1120.0, 640.0])
         .with_app_id("bookley");
     if let Some(icon) = icon {
         viewport = viewport.with_icon(Arc::new(icon));

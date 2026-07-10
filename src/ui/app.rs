@@ -144,6 +144,8 @@ pub struct App {
     session_mode: Option<ContentMode>,
     pub last_result: Option<SessionResult>,
     pub last_was_pb: bool,
+    /// The finished session used dev shortcuts, so it was shown but not recorded.
+    pub last_was_dev: bool,
     /// When the results screen was entered (guards the Enter shortcut).
     pub results_at: Option<Instant>,
 
@@ -232,6 +234,7 @@ impl App {
             session_mode: None,
             last_result: None,
             last_was_pb: false,
+            last_was_dev: false,
             results_at: None,
             paste_input: String::new(),
             word_src: WordSource::new(),
@@ -815,14 +818,23 @@ impl App {
             .tick(self.pause.active_secs(self.raw_secs()));
         let result = SessionResult::from_metrics(&session.metrics, self.mode_label());
         tracing::info!(
-            "session complete mode={} {}",
+            "session complete mode={} dev={} {}",
             self.mode_label(),
+            session.dev_assisted,
             session.metrics.summary_line()
         );
-        let is_pb = self.stats.record(result.clone());
-        self.save_stats();
+        // Dev-assisted sessions (F9/F10/F12) produce garbage speeds; show the results
+        // but never record them into the stats history or personal bests.
+        let is_pb = if session.dev_assisted {
+            false
+        } else {
+            let pb = self.stats.record(result.clone());
+            self.save_stats();
+            pb
+        };
         self.last_result = Some(result);
         self.last_was_pb = is_pb;
+        self.last_was_dev = session.dev_assisted;
 
         // Book chapters: mark the chapter fully typed. A failed save is surfaced (the
         // user would otherwise retype the chapter after a silent loss).
@@ -1425,6 +1437,10 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(egui::Margin::symmetric(16, 10)),
         )
         .show(ui, |ui| {
+            // Below ~1235px the eyebrow labels would push the right cluster into the
+            // mode tabs (they collide and overlap); drop the labels first. The window's
+            // min inner size guarantees the label-less bar always fits.
+            let tight = ui.max_rect().width() < 1235.0;
             ui.horizontal(|ui| {
                 // Wordmark lockup: literary serif + quiet descriptor.
                 ui.label(
@@ -1487,12 +1503,14 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                             app.save_config();
                         }
                     }
-                    ui.label(
-                        egui::RichText::new("KEYBOARD")
-                            .color(p.ghost)
-                            .size(10.0)
-                            .extra_letter_spacing(1.2),
-                    );
+                    if !tight {
+                        ui.label(
+                            egui::RichText::new("KEYBOARD")
+                                .color(p.ghost)
+                                .size(10.0)
+                                .extra_letter_spacing(1.2),
+                        );
+                    }
                     ui.add_space(14.0);
                     // Typewriter-sound session toggle; the launch default lives in
                     // Settings and is not overwritten by this switch.
@@ -1511,12 +1529,14 @@ is in Settings.",
                     {
                         app.sound_on = !app.sound_on;
                     }
-                    ui.label(
-                        egui::RichText::new("SOUND")
-                            .color(p.ghost)
-                            .size(10.0)
-                            .extra_letter_spacing(1.2),
-                    );
+                    if !tight {
+                        ui.label(
+                            egui::RichText::new("SOUND")
+                                .color(p.ghost)
+                                .size(10.0)
+                                .extra_letter_spacing(1.2),
+                        );
+                    }
                 });
             });
         });

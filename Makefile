@@ -7,7 +7,17 @@ FAKE_CLAUDE := $(abspath tests/fake_claude.sh)
 .DEFAULT_GOAL := help
 
 .PHONY: help deps build run dev test smoke live-book-smoke lint icons screenshot \
-        install-claude desktop-install clean
+        install uninstall install-claude desktop-install clean
+
+# Everything `make install` puts on the system, so future versions know exactly what to
+# replace and `make uninstall` knows exactly what to remove. The binary is fully
+# self-contained (fonts, sounds, word list, and the novelist plugin are embedded; the
+# plugin re-stages itself into the data dir at runtime). User data (books, settings,
+# stats) lives under ~/.config and ~/.local/share/bookleykeytrainer and is NEVER
+# touched by install or uninstall. Books especially are sacred.
+INSTALL_BIN := $(HOME)/.local/bin/bookley
+INSTALL_DESKTOP := $(HOME)/.local/share/applications/bookley.desktop
+ICON_SIZES := 16 32 48 64 128 256
 
 help: ## List every target with a one-line description
 	@echo "Bookley Key Trainer - make targets:"
@@ -49,6 +59,26 @@ icons: ## Regenerate icon PNGs (hicolor layout + window icon) from assets/icon/b
 
 screenshot: ## Boot the app, render a few frames, save smoke-screenshot.png, exit
 	$(CARGO) run -- --screenshot smoke-screenshot.png
+
+install: build ## Install for the current user: ~/.local/bin binary, desktop entry, icons (never touches books/settings)
+	@rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP)
+	@for s in $(ICON_SIZES); do rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; done
+	install -Dm755 target/release/bookley $(INSTALL_BIN)
+	install -Dm644 assets/bookley.desktop $(INSTALL_DESKTOP)
+	@for s in $(ICON_SIZES); do \
+		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley.png \
+			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; \
+	done
+	@echo "Installed $(INSTALL_BIN) plus the desktop entry and icons."
+	@echo "The binary is self-contained: the cloned repo can be deleted."
+	@echo "Make sure ~/.local/bin is on your PATH."
+	@echo "Your books, settings, and stats live under ~/.local/share/bookleykeytrainer"
+	@echo "and ~/.config, and are never touched by install or uninstall."
+
+uninstall: ## Remove the installed binary, desktop entry, and icons. Books/settings/stats are NEVER removed
+	rm -f $(INSTALL_BIN) $(INSTALL_DESKTOP)
+	@for s in $(ICON_SIZES); do rm -f $(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley.png; done
+	@echo "Removed the app. Your books, settings, and stats remain untouched."
 
 install-claude: ## Install the Claude Code CLI from Anthropic's APT repo (Debian/Ubuntu, uses sudo; no-op if present)
 	@if command -v claude >/dev/null 2>&1; then \

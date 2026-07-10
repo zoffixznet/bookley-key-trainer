@@ -41,6 +41,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .strong(),
                     );
                 }
+                if app.last_was_dev {
+                    ui.add_space(6.0);
+                    ui.label(
+                        egui::RichText::new("dev-assisted run: not recorded")
+                            .color(p.ghost)
+                            .size(11.5),
+                    );
+                }
                 // The personal best sits in the header flow, not floating at the edge.
                 if let Some(best) = app.stats.best_for(&result.mode) {
                     ui.add_space(10.0);

@@ -109,17 +109,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// One book on the shelf: a spine-like card with title, language, progress, actions.
-/// The currently open book's tile is unmistakably active: a thicker accent border and
-/// spine, an "OPEN" text badge (the state is never carried by hue alone), and its action
-/// button disabled and relabeled "Opened".
+/// The currently open book's tile keeps identical geometry to every other tile; its
+/// state is carried by a slightly darker background and the disabled "Opened" button
+/// (a luminance + text cue, never hue alone and never a layout change).
 fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store::Book) {
     let p = app.palette();
     let title = crate::core::book::store::display_title(&book.meta);
     let done = book.meta.chapters.iter().filter(|c| c.done).count();
     let total = book.meta.chapters.len();
     let is_open = app.book_ui.open_slug.as_deref() == Some(book.meta.slug.as_str());
+    // The open book's tile: a slightly darker background plus the disabled "Opened"
+    // button, and NOTHING that changes the tile's geometry. Earlier cues (a badge and a
+    // thicker border/spine) altered the layout, re-wrapped titles, and misaligned the
+    // whole grid.
     let frame = if is_open {
-        theme::card(&p).stroke(egui::Stroke::new(2.0, p.verdigris))
+        theme::card(&p).fill(p.ink_950)
     } else {
         theme::card(&p)
     };
@@ -127,46 +131,24 @@ fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store:
         ui.vertical(|ui| {
             ui.set_width(268.0);
             ui.set_min_height(112.0);
-            // Spine accent along the top of the card: brass normally, a thicker
-            // verdigris one on the open book.
-            let spine_h = if is_open { 5.0 } else { 3.0 };
-            let (rule, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), spine_h),
-                egui::Sense::hover(),
-            );
-            ui.painter().rect_filled(
-                rule,
-                egui::CornerRadius::same(2),
-                if is_open { p.verdigris } else { p.brass },
-            );
+            // Spine accent along the top of the card (identical on every tile).
+            let (rule, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rule, egui::CornerRadius::same(2), p.brass);
             ui.add_space(6.0);
             // The title must wrap inside the fixed card width. A Label in a horizontal
             // layout never wraps (it extends), so a long AI-generated title would blow
             // the tile out to the full row width; keep the title an explicitly wrapping
-            // label and, on the open book, pin the badge to the card's top-right with a
-            // right-to-left row so the title wraps in the space that remains.
-            let title_label = egui::Label::new(
-                egui::RichText::new(&title)
-                    .font(theme::display_font(17.0))
-                    .color(p.paper),
-            )
-            .wrap();
-            if is_open {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    ui.label(
-                        egui::RichText::new(" OPEN ")
-                            .color(p.ink_850)
-                            .background_color(p.verdigris)
-                            .size(10.5)
-                            .strong(),
-                    );
-                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                        ui.add(title_label);
-                    });
-                });
-            } else {
-                ui.add(title_label);
-            }
+            // label.
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(&title)
+                        .font(theme::display_font(17.0))
+                        .color(p.paper),
+                )
+                .wrap(),
+            );
             ui.add_space(2.0);
             let mut meta = format!("{done}/{total} chapters typed");
             if !book.meta.language.is_empty() {
