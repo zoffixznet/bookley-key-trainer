@@ -1,0 +1,4 @@
+/target
+*.pdf
+!docs/**/*.pdf
+scratch/

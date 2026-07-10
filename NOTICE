@@ -1,0 +1,24 @@
+Bookley Key Trainer — third-party assets and attributions
+
+Word list (Single-word mode)
+----------------------------
+assets/wordlist.txt is derived from the EFF Long Wordlist
+("eff_large_wordlist.txt") published by the Electronic Frontier Foundation.
+Only the word column is used; the dice-roll numbers were dropped.
+
+  Source:  https://www.eff.org/dice
+  License: Creative Commons Attribution 3.0 United States (CC BY 3.0 US)
+           https://creativecommons.org/licenses/by/3.0/us/
+  Attribution: "EFF Long Wordlist" by the Electronic Frontier Foundation.
+
+Fonts
+-----
+The app embeds any fonts found under assets/fonts/ at build time. If a font is
+added there, its name and open-source license (e.g. SIL Open Font License) must
+be recorded in this file. When no fonts are staged, the app falls back to
+egui's bundled fonts and no third-party font is distributed.
+
+Reference: AI-writing idiosyncrasy taxonomy
+-------------------------------------------
+The bundled novelist skill cites the LAMP-corpus taxonomy of AI-writing tics:
+arXiv:2409.14509. This is a citation only; no text from the paper is bundled.
