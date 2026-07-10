@@ -205,6 +205,14 @@ impl WordSource {
         items
     }
 
+    /// A refill batch for an in-flight stream: starts with the separating space so the
+    /// seam between the served target and the extension never fuses two words together.
+    pub fn refill_batch(&self, n: usize) -> Vec<Expected> {
+        let mut items = vec![Expected::Char(' ')];
+        items.extend(self.batch(n));
+        items
+    }
+
     /// A stream target of `n` words for the timed drill.
     pub fn stream_target(&self, n: usize) -> Target {
         Target {
@@ -314,6 +322,28 @@ mod tests {
         // Batches are extendable stream chunks.
         let extra = src.batch(10);
         assert!(!extra.is_empty());
+    }
+
+    /// A refill appended to a running stream must not fuse the last old word with the
+    /// first new one: the seam carries exactly one separating space.
+    #[test]
+    fn refill_batch_keeps_the_seam_word_boundary() {
+        let src = WordSource::new();
+        let mut items = src.stream_target(3).items;
+        items.extend(src.refill_batch(2));
+        let text: String = items
+            .iter()
+            .map(|e| match e {
+                Expected::Char(c) => *c,
+                Expected::PhysicalKey(_) => '?',
+            })
+            .collect();
+        assert_eq!(
+            text.split(' ').count(),
+            5,
+            "5 words stay 5 tokens: {text:?}"
+        );
+        assert!(!text.contains("  "), "single spaces only: {text:?}");
     }
 
     #[test]

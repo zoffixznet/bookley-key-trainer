@@ -9,6 +9,22 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// Crash-safe file write: write to `<path>.tmp`, fsync, then rename over the target.
+/// The rename is atomic on the same filesystem, so a crash, kill, or power loss
+/// mid-write can never leave a truncated file behind — the old contents survive.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)
+}
+
 /// Per-chapter metadata and typed-progress state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChapterMeta {
@@ -81,7 +97,7 @@ impl Book {
         std::fs::create_dir_all(&self.dir)?;
         std::fs::create_dir_all(self.chapters_dir())?;
         let s = toml::to_string_pretty(&self.meta).map_err(std::io::Error::other)?;
-        std::fs::write(self.meta_path(), s)
+        write_atomic(&self.meta_path(), s.as_bytes())
     }
 
     pub fn read_bible(&self) -> String {
@@ -90,7 +106,7 @@ impl Book {
 
     pub fn write_bible(&self, bible: &str) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
-        std::fs::write(self.bible_path(), bible)
+        write_atomic(&self.bible_path(), bible.as_bytes())
     }
 
     pub fn read_chapter(&self, n: usize) -> std::io::Result<String> {
@@ -132,7 +148,7 @@ impl Book {
         bible: &str,
     ) -> std::io::Result<()> {
         std::fs::create_dir_all(self.chapters_dir())?;
-        std::fs::write(self.chapter_path(n), prose)?;
+        write_atomic(&self.chapter_path(n), prose.as_bytes())?;
         if !bible.trim().is_empty() {
             self.write_bible(bible)?;
         }
@@ -159,13 +175,19 @@ impl Book {
         self.save()
     }
 
-    /// Mark a chapter's typed progress.
-    pub fn set_typed_progress(&mut self, n: usize, typed_chars: usize, done: bool) {
+    /// Mark a chapter's typed progress. The save error propagates (e.g. a full disk)
+    /// so callers can surface it instead of silently losing typing progress.
+    pub fn set_typed_progress(
+        &mut self,
+        n: usize,
+        typed_chars: usize,
+        done: bool,
+    ) -> std::io::Result<()> {
         if let Some(c) = self.meta.chapters.iter_mut().find(|c| c.n == n) {
             c.typed_chars = typed_chars;
             c.done = done;
         }
-        let _ = self.save();
+        self.save()
     }
 
     /// Concatenate all chapters into a single export Markdown with a title page.
@@ -386,7 +408,7 @@ mod tests {
             .unwrap();
         book.write_chapter(1, "Arrival", "It began at dusk.", "CAST: Mara")
             .unwrap();
-        book.set_typed_progress(1, 17, true);
+        book.set_typed_progress(1, 17, true).unwrap();
         assert!(book.all_chapters_typed());
 
         // Reload from disk.
@@ -486,7 +508,7 @@ mod tests {
         book.write_chapter(1, "One", text, "").unwrap();
 
         // Crash-safe save mid-paragraph-three.
-        book.set_typed_progress(1, 25, false);
+        book.set_typed_progress(1, 25, false).unwrap();
         let reloaded = store.load(&book.meta.slug).unwrap();
         let ch = &reloaded.meta.chapters[0];
         assert_eq!(ch.typed_chars, 25);
@@ -495,7 +517,9 @@ mod tests {
 
         // Finishing the chapter marks it done with the full length.
         let mut reloaded = reloaded;
-        reloaded.set_typed_progress(1, text.chars().count(), true);
+        reloaded
+            .set_typed_progress(1, text.chars().count(), true)
+            .unwrap();
         let again = store.load(&book.meta.slug).unwrap();
         assert!(again.meta.chapters[0].done);
         assert!(again.all_chapters_typed());
@@ -505,6 +529,37 @@ mod tests {
         again.write_chapter(1, "One v2", "New text.", "").unwrap();
         assert_eq!(again.meta.chapters[0].typed_chars, 0);
         assert!(!again.meta.chapters[0].done);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Metadata writes go through the tmp+rename atomic path: the content lands intact,
+    /// old content is replaced (not appended), and no .tmp litter survives a save.
+    #[test]
+    fn atomic_write_replaces_and_leaves_no_tmp() {
+        let root = tmp_root();
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("book.toml");
+        write_atomic(&path, b"first version").unwrap();
+        write_atomic(&path, b"second").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "second");
+        assert!(
+            !root.join("book.toml.tmp").exists(),
+            "tmp file must be gone"
+        );
+
+        // The store's own saves use the same path: repeated progress saves keep the
+        // metadata parseable and leave no temp files in the book dir.
+        let store = BookStore::new(root.clone());
+        let mut book = store.create("Atomic", "English", "", false).unwrap();
+        book.write_chapter(1, "One", "Prose.", "BIBLE").unwrap();
+        book.set_typed_progress(1, 3, false).unwrap();
+        let leftovers: Vec<_> = std::fs::read_dir(book.dir.clone())
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no .tmp litter: {leftovers:?}");
+        assert_eq!(store.load(&book.meta.slug).unwrap().meta.title, "Atomic");
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -135,6 +135,13 @@ pub struct App {
     pub awaiting_start: bool,
     /// Pause bookkeeping: paused time never counts toward metrics.
     pub pause: PauseClock,
+    /// The pause was applied automatically on leaving the typing screen; it lifts
+    /// automatically on return (a manual pause stays until the user resumes).
+    auto_paused: bool,
+    /// The content mode the active session was created under. `finish_session` and the
+    /// input rules use this snapshot, so switching modes mid-session can never relabel
+    /// a result or change how Backspace behaves for the session in progress.
+    session_mode: Option<ContentMode>,
     pub last_result: Option<SessionResult>,
     pub last_was_pb: bool,
     /// When the results screen was entered (guards the Enter shortcut).
@@ -181,6 +188,8 @@ pub struct App {
     /// When set, save a screenshot here after a few frames and exit (verification mode).
     pub screenshot_path: Option<std::path::PathBuf>,
     frame_count: u64,
+    /// The frame at which the screenshot was requested (verification mode).
+    shot_requested_at: Option<u64>,
 
     // Whether a real embedded/managed session is running or we are idle.
     start_time: Instant,
@@ -219,6 +228,8 @@ impl App {
             session_started: None,
             awaiting_start: false,
             pause: PauseClock::default(),
+            auto_paused: false,
+            session_mode: None,
             last_result: None,
             last_was_pb: false,
             results_at: None,
@@ -244,13 +255,34 @@ impl App {
             last_progress_save: Instant::now(),
             screenshot_path: None,
             frame_count: 0,
+            shot_requested_at: None,
             start_time: Instant::now(),
         };
         // Kick off a background auth check so Book mode knows its state without blocking.
         app.refresh_auth();
-        // Start an initial session for the default content mode (except Book, which needs
-        // a book selected first).
-        if app.config.content_mode != ContentMode::Book {
+        // Start an initial session for the default content mode. Book mode reopens the
+        // most recently opened book and serves its next chapter directly, so the user
+        // lands on the typing stage with the Space gate armed: open the app, press
+        // Space, keep typing. With nothing left to type (or no remembered book) it
+        // lands on the Books page instead.
+        if app.config.content_mode == ContentMode::Book {
+            match app.config.last_book.clone() {
+                Some(slug) if app.store.load(&slug).is_ok() => {
+                    app.book_ui.open_slug = Some(slug);
+                    app.start_session();
+                    if app.session.is_none() {
+                        app.screen = Screen::Books;
+                    }
+                }
+                Some(_) => {
+                    // The remembered book no longer exists; forget it.
+                    app.config.last_book = None;
+                    app.save_config();
+                    app.screen = Screen::Books;
+                }
+                None => app.screen = Screen::Books,
+            }
+        } else {
             app.start_session();
         }
         app
@@ -382,6 +414,10 @@ impl App {
         self.awaiting_start = false;
         self.session_started = Some(Instant::now());
         self.pause = PauseClock::default();
+        self.auto_paused = false;
+        // The session clock rewinds to zero: stale flash timestamps from the previous
+        // clock would stay "animating" (and lit) for minutes, so drop them.
+        self.flash = FlashState::default();
     }
 
     /// Zero the timer and every metric WITHOUT losing the typing position (Paste and
@@ -394,8 +430,11 @@ impl App {
         };
         s.reset_metrics();
         self.pause = PauseClock::default();
+        self.auto_paused = false;
         self.session_started = None;
         self.awaiting_start = true;
+        // The session clock rewinds; see `begin_after_gate`.
+        self.flash = FlashState::default();
     }
 
     /// Build a text source for the current content mode and start a fresh session.
@@ -439,12 +478,56 @@ impl App {
         if let Some(mut s) = session {
             s.metrics.tick(0.0);
             self.session = Some(s);
+            self.session_mode = Some(self.config.content_mode);
             // Every mode starts behind the press-Space gate: the clock starts on Space,
             // and that press is never counted as typing input.
             self.session_started = None;
             self.awaiting_start = true;
             self.pause = PauseClock::default();
+            self.auto_paused = false;
+            // Fresh session clock: drop flash timestamps from the previous clock.
+            self.flash = FlashState::default();
             self.screen = Screen::Typing;
+        }
+    }
+
+    /// Switch the content mode with full session bookkeeping (the top-bar tabs and the
+    /// Settings selector both go through here): any book progress is persisted and the
+    /// old mode's session is dropped, so it can never be misread under the new mode
+    /// (wrong Backspace rules, wrong stats bucket, bogus progress spine).
+    pub fn set_content_mode(&mut self, mode: ContentMode) {
+        if self.config.content_mode == mode {
+            return;
+        }
+        self.save_book_progress();
+        self.session = None;
+        self.session_book = None;
+        self.session_mode = None;
+        self.pause = PauseClock::default();
+        self.auto_paused = false;
+        self.config.content_mode = mode;
+        self.save_config();
+        match mode {
+            ContentMode::Book => self.screen = Screen::Books,
+            // Paste needs input first; show the stage which prompts for it.
+            ContentMode::Paste => self.screen = Screen::Typing,
+            _ => self.start_session(),
+        }
+    }
+
+    /// Drop the live typing session if it is typing `slug` (chapter `n`, or any chapter
+    /// when `n` is None). Rewrites and deletes call this: a session over replaced or
+    /// deleted prose must never survive to mark the new chapter as typed.
+    pub fn invalidate_book_session(&mut self, slug: &str, n: Option<usize>) {
+        let stale = self
+            .session_book
+            .as_ref()
+            .is_some_and(|(s, cn)| s == slug && n.is_none_or(|n| *cn == n));
+        if stale {
+            self.session = None;
+            self.session_book = None;
+            self.session_mode = None;
+            self.book_ui.typing_chapter = None;
         }
     }
 
@@ -456,7 +539,9 @@ impl App {
             if s.time_limit_secs.is_some() {
                 if s.items_remaining() < 60 {
                     let extra = match self.config.content_mode {
-                        ContentMode::Word => self.word_src.batch(60),
+                        // Refill batches carry their own leading separator so the seam
+                        // never fuses the last old word with the first new one.
+                        ContentMode::Word => self.word_src.refill_batch(60),
                         ContentMode::Random => self
                             .random_src
                             .as_ref()
@@ -471,7 +556,10 @@ impl App {
                     };
                     s.extend_target(extra);
                 }
-                if s.time_up(now) && !self.pause.is_paused() {
+                // Only finish on the typing screen (elsewhere the drill is auto-paused;
+                // this guard keeps a force-finish from ever yanking the user out of
+                // Settings/Books into a garbage result).
+                if s.time_up(now) && !self.pause.is_paused() && self.screen == Screen::Typing {
                     time_up = true;
                 }
             }
@@ -571,14 +659,20 @@ impl App {
                 .map(|c| c.typed_chars)
                 .unwrap_or(0);
             if !done_already && pos > on_disk {
-                book.set_typed_progress(n, pos, false);
+                if let Err(e) = book.set_typed_progress(n, pos, false) {
+                    tracing::error!("failed to save typing progress for {slug} ch{n}: {e}");
+                    self.book_ui.status = Some(format!("Could not save typing progress: {e}"));
+                    return; // retry on the next save tick
+                }
             }
             self.progress_saved_pos = pos;
         }
     }
 
+    /// The stats label for the ACTIVE session's mode (snapshotted at session start), so
+    /// switching tabs mid-session can never file a result under the wrong mode.
     fn mode_label(&self) -> &'static str {
-        match self.config.content_mode {
+        match self.session_mode.unwrap_or(self.config.content_mode) {
             ContentMode::Random => "random",
             ContentMode::Word => "word",
             ContentMode::Paste => "paste",
@@ -666,8 +760,10 @@ impl App {
         }
         let now = self.session_secs();
         // Random mode drills Backspace as an ordinary key; the other modes use it to
-        // correct mistakes.
-        let backspace_is_input = self.config.content_mode == ContentMode::Random;
+        // correct mistakes. Decided by the mode the SESSION was created under, so a
+        // mid-session mode switch can never turn Backspace inert.
+        let backspace_is_input =
+            self.session_mode.unwrap_or(self.config.content_mode) == ContentMode::Random;
         let cursor_before = self.session.as_ref().map(|s| s.cursor).unwrap_or(0);
         let completed = match self.session.as_mut() {
             Some(s) => feed_session_events(
@@ -728,13 +824,27 @@ impl App {
         self.last_result = Some(result);
         self.last_was_pb = is_pb;
 
-        // Book chapters: mark the chapter fully typed.
+        // Book chapters: mark the chapter fully typed. A failed save is surfaced (the
+        // user would otherwise retype the chapter after a silent loss).
         if let Some((slug, n)) = self.session_book.take() {
-            if let Ok(mut book) = self.store.load(&slug) {
-                book.set_typed_progress(n, self.book_chapter_len, true);
+            match self.store.load(&slug) {
+                Ok(mut book) => {
+                    if let Err(e) = book.set_typed_progress(n, self.book_chapter_len, true) {
+                        tracing::error!("failed to mark {slug} ch{n} typed: {e}");
+                        self.book_ui.status =
+                            Some(format!("Could not save the chapter's progress: {e}"));
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("failed to load {slug} to mark ch{n} typed: {e}");
+                    self.book_ui.status =
+                        Some(format!("Could not save the chapter's progress: {e}"));
+                }
             }
         }
+        self.session_mode = None;
         self.pause = PauseClock::default();
+        self.auto_paused = false;
         self.results_at = Some(Instant::now());
         self.screen = Screen::Results;
     }
@@ -866,6 +976,11 @@ impl App {
             self.book_ui.status = Some(format!("Failed to save the chapter: {e}"));
             return;
         }
+        // A rewrite replaced the prose a live session may still be typing; drop that
+        // session, or finishing it would mark the NEW chapter typed without ever being
+        // typed (and progress saves would write stale offsets into the new text).
+        let slug = book.meta.slug.clone();
+        self.invalidate_book_session(&slug, Some(n));
         self.book_ui.pending_questions = None;
         self.book_ui.continuation.clear();
         self.book_ui.make_last = false;
@@ -1007,29 +1122,31 @@ impl App {
         self.cover_gen = None;
         match ev {
             CoverEvent::Done { png, used_fallback } => match self.store.load(&slug) {
-                Ok(book) => match std::fs::write(book.cover_path(), &png) {
-                    Ok(()) => {
-                        tracing::info!(
-                            "cover saved book={} bytes={} fallback={}",
-                            slug,
-                            png.len(),
-                            used_fallback
-                        );
-                        self.cover_tex = None; // force a texture reload
-                        self.book_ui.status = Some(if used_fallback {
-                            "Claude's design could not be rendered, so a clean typographic \
+                Ok(book) => {
+                    match crate::core::book::store::write_atomic(&book.cover_path(), &png) {
+                        Ok(()) => {
+                            tracing::info!(
+                                "cover saved book={} bytes={} fallback={}",
+                                slug,
+                                png.len(),
+                                used_fallback
+                            );
+                            self.cover_tex = None; // force a texture reload
+                            self.book_ui.status = Some(if used_fallback {
+                                "Claude's design could not be rendered, so a clean typographic \
 cover was generated instead. Regenerate to try again."
-                                .into()
-                        } else {
-                            "Cover ready: it is page one of the PDF export. Regenerating \
+                                    .into()
+                            } else {
+                                "Cover ready: it is page one of the PDF export. Regenerating \
 replaces it."
-                                .into()
-                        });
+                                    .into()
+                            });
+                        }
+                        Err(e) => {
+                            self.book_ui.status = Some(format!("Could not save the cover: {e}"));
+                        }
                     }
-                    Err(e) => {
-                        self.book_ui.status = Some(format!("Could not save the cover: {e}"));
-                    }
-                },
+                }
                 Err(e) => {
                     self.book_ui.status = Some(format!("Could not load the book: {e}"));
                 }
@@ -1051,16 +1168,28 @@ replaces it."
     }
 
     /// Verification mode: render a few frames, request a screenshot, save it, exit.
+    /// `BOOKLEY_SHOT_DELAY_MS` postpones the capture so an external driver (xdotool)
+    /// can position the pointer first, verifying hover states and tooltips for real.
     fn handle_screenshot_mode(&mut self, ctx: &egui::Context) {
         let Some(path) = self.screenshot_path.clone() else {
             return;
         };
         self.frame_count += 1;
         ctx.request_repaint();
-        if self.frame_count == 5 {
+        let delay_ms: u64 = std::env::var("BOOKLEY_SHOT_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let due = self.start_time.elapsed().as_millis() as u64 >= delay_ms;
+        if self.frame_count >= 5 && due && self.shot_requested_at.is_none() {
+            self.shot_requested_at = Some(self.frame_count);
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
         }
-        if self.frame_count > 300 {
+        if self
+            .shot_requested_at
+            .map(|at| self.frame_count > at + 300)
+            .unwrap_or(false)
+        {
             tracing::error!("screenshot never arrived; giving up");
             std::process::exit(1);
         }
@@ -1101,6 +1230,19 @@ impl eframe::App for App {
         self.poll_auth();
         self.poll_gen(ctx);
         self.poll_cover(ctx);
+        // Never let a drill's clock run (or its timer expire) while the user is on
+        // another screen: auto-pause on leaving the typing stage, auto-resume on
+        // return. A manual pause is left alone.
+        if self.session.is_some() && !self.awaiting_start {
+            let raw = self.raw_secs();
+            if self.screen != Screen::Typing && !self.pause.is_paused() {
+                self.pause.pause(raw);
+                self.auto_paused = true;
+            } else if self.screen == Screen::Typing && self.auto_paused {
+                self.pause.resume(raw);
+                self.auto_paused = false;
+            }
+        }
         self.handle_typing_input(ctx);
         self.tick_timed_drill();
 
@@ -1320,20 +1462,7 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                         egui::RichText::new(mode.label()).color(p.paper)
                     };
                     if ui.selectable_label(selected, text).clicked() && !selected {
-                        app.config.content_mode = mode;
-                        app.save_config();
-                        if mode == ContentMode::Book {
-                            app.screen = Screen::Books;
-                        } else if mode == ContentMode::Paste {
-                            // Paste needs input first; show the stage which prompts for
-                            // it. Never lose an in-flight book chapter's position.
-                            app.save_book_progress();
-                            app.session = None;
-                            app.session_book = None;
-                            app.screen = Screen::Typing;
-                        } else {
-                            app.start_session();
-                        }
+                        app.set_content_mode(mode);
                     }
                 }
 

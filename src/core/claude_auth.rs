@@ -277,7 +277,7 @@ fn scrape_pty(
         let text = strip_ansi(&String::from_utf8_lossy(&raw));
 
         if !sent_url {
-            if let Some(url) = find_oauth_url(&text) {
+            if let Some(url) = find_oauth_url(&text, false) {
                 sent_url = true;
                 let _ = tx.send(ConnectEvent::Url(url));
             }
@@ -287,26 +287,25 @@ fn scrape_pty(
             let _ = tx.send(ConnectEvent::WaitingForCode);
         }
         if !done {
-            if let Some(tok) = find_oauth_token(&text) {
+            if let Some(tok) = find_oauth_token(&text, false) {
                 done = true;
-                match save_token(&tok) {
-                    Ok(path) => {
-                        tracing::info!("claude auth: token stored at {}", path.display());
-                        let _ = tx.send(ConnectEvent::TokenStored);
-                    }
-                    Err(e) => {
-                        let _ = tx.send(ConnectEvent::Failed(format!(
-                            "Could not save the token: {e}"
-                        )));
-                    }
-                }
+                store_scraped_token(&tok, &tx);
             }
+        }
+    }
+
+    // EOF: no more data can arrive, so a token running to the end of the buffer is
+    // complete and safe to accept now.
+    let text = strip_ansi(&String::from_utf8_lossy(&raw));
+    if !done {
+        if let Some(tok) = find_oauth_token(&text, true) {
+            done = true;
+            store_scraped_token(&tok, &tx);
         }
     }
 
     if !done {
         // Child exited without producing a token.
-        let text = strip_ansi(&String::from_utf8_lossy(&raw));
         let hint = if text.to_lowercase().contains("invalid") {
             "The code was not accepted. Start over and paste the fresh code."
         } else if sent_url {
@@ -315,6 +314,21 @@ fn scrape_pty(
             "The Claude sign-in flow did not start properly. Try connecting again."
         };
         let _ = tx.send(ConnectEvent::Failed(hint.to_string()));
+    }
+}
+
+/// Persist a scraped token and report the outcome on the event channel.
+fn store_scraped_token(tok: &str, tx: &Sender<ConnectEvent>) {
+    match save_token(tok) {
+        Ok(path) => {
+            tracing::info!("claude auth: token stored at {}", path.display());
+            let _ = tx.send(ConnectEvent::TokenStored);
+        }
+        Err(e) => {
+            let _ = tx.send(ConnectEvent::Failed(format!(
+                "Could not save the token: {e}"
+            )));
+        }
     }
 }
 
@@ -363,12 +377,18 @@ pub fn strip_ansi(s: &str) -> String {
 
 /// Find the OAuth authorize URL in scraped output. Tolerates arbitrary surrounding text;
 /// requires an https URL that looks like an authorize link.
-pub fn find_oauth_url(text: &str) -> Option<String> {
+///
+/// A match that runs to the very end of the buffer may be a PARTIAL value cut off at a
+/// PTY read boundary, so it is only accepted when `at_eof` says no more data can arrive;
+/// otherwise the caller waits for the next read and scans again.
+pub fn find_oauth_url(text: &str, at_eof: bool) -> Option<String> {
     for (i, _) in text.match_indices("https://") {
         let tail = &text[i..];
-        let end = tail
-            .find(|c: char| c.is_whitespace() || c == '"' || c == '\'')
-            .unwrap_or(tail.len());
+        let end = match tail.find(|c: char| c.is_whitespace() || c == '"' || c == '\'') {
+            Some(e) => e,
+            None if at_eof => tail.len(),
+            None => continue, // possibly split across a read boundary; wait for more
+        };
         let url = &tail[..end];
         if url.contains("oauth") || url.contains("authorize") {
             return Some(url.to_string());
@@ -377,13 +397,17 @@ pub fn find_oauth_url(text: &str) -> Option<String> {
     None
 }
 
-/// Find a long-lived OAuth token (`sk-ant-oat...`) in scraped output.
-pub fn find_oauth_token(text: &str) -> Option<String> {
+/// Find a long-lived OAuth token (`sk-ant-oat...`) in scraped output. Same read-boundary
+/// rule as `find_oauth_url`: a token touching the end of the buffer is only trusted at
+/// EOF, so a chunk split mid-token can never latch (and store) a truncated token.
+pub fn find_oauth_token(text: &str, at_eof: bool) -> Option<String> {
     let i = text.find("sk-ant-oat")?;
     let tail = &text[i..];
-    let end = tail
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-        .unwrap_or(tail.len());
+    let end = match tail.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_')) {
+        Some(e) => e,
+        None if at_eof => tail.len(),
+        None => return None, // possibly split across a read boundary; wait for more
+    };
     let tok = &tail[..end];
     // A real token is long; ignore accidental short matches.
     if tok.len() > 20 {
@@ -407,7 +431,7 @@ mod tests {
     fn finds_wrapped_oauth_url() {
         let text = "Browser didn't open? Use the url below to sign in (c to copy)\n\
 https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=xyz\n\nPaste code here if prompted >";
-        let url = find_oauth_url(text).unwrap();
+        let url = find_oauth_url(text, false).unwrap();
         assert!(url.starts_with("https://claude.com/cai/oauth/authorize"));
         assert!(url.ends_with("state=xyz"));
     }
@@ -415,7 +439,7 @@ https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=xyz\n\nPast
     #[test]
     fn ignores_non_oauth_urls() {
         assert_eq!(
-            find_oauth_url("see https://example.com/docs for info"),
+            find_oauth_url("see https://example.com/docs for info", false),
             None
         );
     }
@@ -424,10 +448,41 @@ https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=xyz\n\nPast
     fn finds_token_and_rejects_short_matches() {
         let text = "Your token:\nsk-ant-oat01-AbCdEf123456789_xyz-987654321\nDone.";
         assert_eq!(
-            find_oauth_token(text).unwrap(),
+            find_oauth_token(text, false).unwrap(),
             "sk-ant-oat01-AbCdEf123456789_xyz-987654321"
         );
-        assert_eq!(find_oauth_token("sk-ant-oat "), None);
+        assert_eq!(find_oauth_token("sk-ant-oat ", false), None);
+    }
+
+    /// A PTY read boundary can split the token/URL mid-value: a match that touches the
+    /// end of the buffer must not latch until more data (or EOF) arrives, or a truncated
+    /// token gets stored as a "successful" connect.
+    #[test]
+    fn boundary_split_token_and_url_wait_for_more_data() {
+        // First chunk ends mid-token: reject, even though 20+ chars matched.
+        let half = "Your token:\nsk-ant-oat01-FIRSTHALFxx";
+        assert_eq!(find_oauth_token(half, false), None);
+        // Once the rest arrives, the full token is accepted.
+        let full = format!("{half}SECONDHALF9876543210\nDone.");
+        assert_eq!(
+            find_oauth_token(&full, false).unwrap(),
+            "sk-ant-oat01-FIRSTHALFxxSECONDHALF9876543210"
+        );
+        // At EOF no more data can come, so end-of-buffer termination is complete.
+        assert_eq!(
+            find_oauth_token(half, true).unwrap(),
+            "sk-ant-oat01-FIRSTHALFxx"
+        );
+
+        // Same rule for the authorize URL: a query string cut at the buffer edge must
+        // not produce a truncated (broken) sign-in link.
+        let url_half = "sign in:\nhttps://claude.com/oauth/authorize?client_id=fake&sta";
+        assert_eq!(find_oauth_url(url_half, false), None);
+        let url_full = format!("{url_half}te=fakestate\n");
+        assert_eq!(
+            find_oauth_url(&url_full, false).unwrap(),
+            "https://claude.com/oauth/authorize?client_id=fake&state=fakestate"
+        );
     }
 
     #[test]

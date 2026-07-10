@@ -125,6 +125,10 @@ pub struct GenSuccess {
     pub plugins: Vec<String>,
     /// Whether any plugin_errors were reported.
     pub plugin_errors: bool,
+    /// The text came from accumulated assistant messages because no terminal `result`
+    /// event was seen (the stream ended early). Callers must distrust this when the
+    /// child also exited non-zero: it is partial output, not a finished chapter.
+    pub text_from_fallback: bool,
 }
 
 pub type GenResult = Result<GenSuccess, GenError>;
@@ -250,13 +254,11 @@ pub fn parse_stream_lines<F: FnMut(&str)>(
     }
 
     // Prefer the final `result` text; fall back to accumulated assistant text.
-    let text = result_text.filter(|t| !t.trim().is_empty()).or_else(|| {
-        if assistant_text.trim().is_empty() {
-            None
-        } else {
-            Some(assistant_text.clone())
-        }
-    });
+    let (text, text_from_fallback) = match result_text.filter(|t| !t.trim().is_empty()) {
+        Some(t) => (Some(t), false),
+        None if assistant_text.trim().is_empty() => (None, false),
+        None => (Some(assistant_text.clone()), true),
+    };
 
     match text {
         Some(t) => Ok(GenSuccess {
@@ -265,6 +267,7 @@ pub fn parse_stream_lines<F: FnMut(&str)>(
             model,
             plugins,
             plugin_errors,
+            text_from_fallback,
         }),
         None => Err(pending_error.unwrap_or_else(|| GenError::Other("no result produced".into()))),
     }
@@ -296,6 +299,7 @@ pub fn parse_json_result(raw: &str) -> GenResult {
                 model: None,
                 plugins: Vec::new(),
                 plugin_errors: false,
+                text_from_fallback: false,
             })
         }
         "error_max_turns" => Err(GenError::MaxTurns),
@@ -464,55 +468,51 @@ impl CommandRunner for ClaudeRunner {
 
         let stdout = child.stdout.take();
 
-        // Watchdog: kill the child on cancel or timeout so the app never hangs on the CLI.
-        let child = Arc::new(Mutex::new(child));
-        let watchdog_child = child.clone();
-        let watchdog_stop = Arc::new(AtomicBool::new(false));
-        let watchdog_stop2 = watchdog_stop.clone();
-        let killed = Arc::new(AtomicBool::new(false));
-        let killed2 = killed.clone();
-        let cancel_flag = Arc::new(AtomicBool::new(false));
-        let cancel_watch = cancel_flag.clone();
-        // Mirror the caller's cancel flag into an owned Arc the watchdog can poll.
-        // (The caller's &AtomicBool lifetime does not outlive this fn, which is fine:
-        // the watchdog also stops when this fn signals completion.)
+        // Watchdog: kill the child on cancel or timeout so the app never hangs on the
+        // CLI. It runs as a SCOPED thread so it can poll the caller's cancel flag
+        // directly: a cancel then kills the child within one poll tick even while the
+        // stdout read below is parked waiting on a silent CLI.
+        let child = Mutex::new(child);
+        let killed = AtomicBool::new(false);
+        let watchdog_stop = AtomicBool::new(false);
         let timeout = std::time::Duration::from_secs(req.timeout_secs.max(1));
         let started = std::time::Instant::now();
-        let watchdog = std::thread::spawn(move || loop {
-            if watchdog_stop2.load(Ordering::SeqCst) {
-                return;
-            }
-            if cancel_watch.load(Ordering::SeqCst) || started.elapsed() > timeout {
-                killed2.store(true, Ordering::SeqCst);
-                if let Ok(mut c) = watchdog_child.lock() {
-                    let _ = c.kill();
+        let result = std::thread::scope(|scope| {
+            let watchdog = scope.spawn(|| loop {
+                if watchdog_stop.load(Ordering::SeqCst) {
+                    return;
                 }
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(150));
-        });
-
-        let result = if let Some(stdout) = stdout {
-            let reader = BufReader::new(stdout);
-            let mut lines_iter = reader.lines();
-            // Pump lines manually so we can mirror the caller's cancel flag as we go.
-            let lines = std::iter::from_fn(|| {
-                if cancel.load(Ordering::SeqCst) {
-                    cancel_flag.store(true, Ordering::SeqCst);
+                if cancel.load(Ordering::SeqCst) || started.elapsed() > timeout {
+                    killed.store(true, Ordering::SeqCst);
+                    if let Ok(mut c) = child.lock() {
+                        let _ = c.kill();
+                    }
+                    return;
                 }
-                lines_iter.next().and_then(|r| r.ok())
+                std::thread::sleep(std::time::Duration::from_millis(150));
             });
-            parse_stream_lines(lines, |d| on_delta(d))
-        } else {
-            Err(GenError::Other("no stdout".into()))
-        };
 
-        // One last mirror in case cancel arrived after EOF.
-        if cancel.load(Ordering::SeqCst) {
-            cancel_flag.store(true, Ordering::SeqCst);
-        }
-        watchdog_stop.store(true, Ordering::SeqCst);
-        let _ = watchdog.join();
+            let result = if let Some(stdout) = stdout {
+                let mut reader = BufReader::new(stdout);
+                // Read raw byte lines and convert lossily: a line with invalid UTF-8
+                // garbles that one line (the JSON parser skips it) instead of aborting
+                // the whole stream and dropping the terminal `result` event.
+                let lines = std::iter::from_fn(move || {
+                    let mut buf = Vec::new();
+                    match reader.read_until(b'\n', &mut buf) {
+                        Ok(0) | Err(_) => None,
+                        Ok(_) => Some(String::from_utf8_lossy(&buf).into_owned()),
+                    }
+                });
+                parse_stream_lines(lines, |d| on_delta(d))
+            } else {
+                Err(GenError::Other("no stdout".into()))
+            };
+
+            watchdog_stop.store(true, Ordering::SeqCst);
+            let _ = watchdog.join();
+            result
+        });
 
         // Reap the child and consider its exit status for error subtypes.
         let status = child.lock().ok().and_then(|mut c| c.wait().ok());
@@ -520,6 +520,18 @@ impl CommandRunner for ClaudeRunner {
         if killed.load(Ordering::SeqCst) {
             return Err(GenError::Cancelled);
         }
+
+        // A "success" assembled from the assistant-text fallback (no terminal `result`
+        // event) is only trustworthy if the child also exited cleanly; otherwise it is
+        // partial output from a run that actually failed and must be reported as such.
+        let result = match result {
+            Ok(s) if s.text_from_fallback && status.map(|st| !st.success()).unwrap_or(false) => {
+                Err(GenError::Other(
+                    "claude exited with an error after partial output".into(),
+                ))
+            }
+            r => r,
+        };
 
         match result {
             Ok(s) => Ok(s),
@@ -681,6 +693,7 @@ mod tests {
 {"type":"result","subtype":"success","is_error":false,"result":"===TITLE===\nOne\n===CHAPTER===\nProse here.\n===BIBLE===\nCAST: A\n===END===","session_id":"abc-123"}"#;
         let mut deltas = String::new();
         let r = parse_stream_lines(lines(s), |d| deltas.push_str(d)).unwrap();
+        assert!(!r.text_from_fallback, "text came from the result event");
         assert_eq!(r.session_id.as_deref(), Some("abc-123"));
         assert_eq!(r.model.as_deref(), Some("claude-x"));
         assert_eq!(r.plugins, vec!["novelist".to_string()]);
@@ -691,12 +704,14 @@ mod tests {
 
     #[test]
     fn parse_stream_falls_back_to_assistant_text() {
-        // No result line; assistant text is used.
+        // No result line; assistant text is used, and the fallback is flagged so the
+        // runner can cross-check it against the child's exit status.
         let s = r#"{"type":"system","subtype":"init","session_id":"s1"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"only assistant prose"}]}}"#;
         let r = parse_stream_lines(lines(s), |_| {}).unwrap();
         assert_eq!(r.text, "only assistant prose");
         assert_eq!(r.session_id.as_deref(), Some("s1"));
+        assert!(r.text_from_fallback);
     }
 
     #[test]
@@ -734,6 +749,106 @@ mod tests {
 
         let bad = r#"{"type":"result","subtype":"error_max_turns","is_error":true}"#;
         assert_eq!(parse_json_result(bad).unwrap_err(), GenError::MaxTurns);
+    }
+
+    /// Write a throwaway executable fake-claude script and a scratch cwd for runner tests.
+    #[cfg(unix)]
+    fn fake_bin(name: &str, script: &str) -> (String, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("bookley-agent-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("claude.sh");
+        std::fs::write(&bin, script).unwrap();
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (bin.to_string_lossy().into_owned(), dir)
+    }
+
+    #[cfg(unix)]
+    fn req_in(dir: &std::path::Path, timeout_secs: u64) -> GenRequest {
+        GenRequest {
+            prompt: "test".into(),
+            system_prompt: "test".into(),
+            model: "sonnet".into(),
+            plugin_dir: dir.to_path_buf(),
+            cwd: dir.to_path_buf(),
+            resume_session: None,
+            fork_session: false,
+            stream: false,
+            timeout_secs,
+        }
+    }
+
+    /// A cancel while the CLI is silent (no stream output at all) must kill the child
+    /// within a poll tick or two — not wait for the next line or the full timeout.
+    #[test]
+    #[cfg(unix)]
+    fn cancel_kills_a_silent_child_promptly() {
+        let (bin, dir) = fake_bin("silent", "#!/bin/sh\ncat >/dev/null\nexec sleep 30\n");
+        let runner = ClaudeRunner { bin };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let flipper = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                cancel.store(true, Ordering::SeqCst);
+            })
+        };
+        let started = std::time::Instant::now();
+        let got = runner.run(&req_in(&dir, 30), &cancel, &mut |_| {});
+        let elapsed = started.elapsed();
+        flipper.join().unwrap();
+        assert_eq!(got.unwrap_err(), GenError::Cancelled);
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "cancel must not wait out the timeout (took {elapsed:?})"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A mid-stream line of invalid UTF-8 must not truncate parsing: the terminal
+    /// `result` event after it still classifies the run (here: MaxTurns), instead of a
+    /// partial-text "success".
+    #[test]
+    #[cfg(unix)]
+    fn invalid_utf8_line_does_not_forge_a_success() {
+        let script = concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}'\n",
+            "echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"partial prose only\"}]}}'\n",
+            "printf '\\377\\376 not utf8\\n'\n",
+            "echo '{\"type\":\"result\",\"subtype\":\"error_max_turns\",\"is_error\":true,\"session_id\":\"s\"}'\n",
+            "exit 1\n",
+        );
+        let (bin, dir) = fake_bin("badutf8", script);
+        let runner = ClaudeRunner { bin };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let got = runner.run(&req_in(&dir, 30), &cancel, &mut |_| {});
+        assert_eq!(got.unwrap_err(), GenError::MaxTurns);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A CLI crash mid-run (partial assistant output, no result event, non-zero exit)
+    /// must be an error, never a silent "success" with a half chapter.
+    #[test]
+    #[cfg(unix)]
+    fn partial_output_with_nonzero_exit_is_an_error() {
+        let script = concat!(
+            "#!/bin/sh\n",
+            "cat >/dev/null\n",
+            "echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}'\n",
+            "echo '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"half a chapter\"}]}}'\n",
+            "exit 1\n",
+        );
+        let (bin, dir) = fake_bin("crash", script);
+        let runner = ClaudeRunner { bin };
+        let cancel = Arc::new(AtomicBool::new(false));
+        let got = runner.run(&req_in(&dir, 30), &cancel, &mut |_| {});
+        assert!(
+            matches!(got, Err(GenError::Other(_))),
+            "expected an error, got {got:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

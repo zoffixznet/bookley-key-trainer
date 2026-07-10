@@ -22,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    theme::page_scroll(ui, |ui| {
         theme::centered_column(ui, COLUMN_W, |ui| {
             ui.add_space(22.0);
             ui.horizontal(|ui| {
@@ -53,27 +53,36 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.add_space(14.0);
 
-            // Big numbers on one baseline: a zero-width spacer sets the row height first
-            // so the first stat is not centered against a shorter provisional row.
+            // The big stats: one tidy block per stat (number over its label, both
+            // center-aligned in the block's column), every block the same height, so
+            // all numbers share a single baseline and all labels line up. Hovering a
+            // block explains the stat in plain language.
+            use theme::stat_tips as tips;
             ui.horizontal(|ui| {
-                let row_h = ui.fonts_mut(|f| {
-                    f.layout_no_wrap("0".into(), theme::mono_font(38.0), Color32::WHITE)
-                        .size()
-                        .y
-                        + f.layout_no_wrap("x".into(), theme::ui_font(11.0), Color32::WHITE)
-                            .size()
-                            .y
-                }) + ui.spacing().item_spacing.y;
-                ui.allocate_exact_size(egui::vec2(0.0, row_h), Sense::hover());
-                ui.add_space(-ui.spacing().item_spacing.x);
-                big_stat(ui, &p, "wpm", &format!("{:.0}", result.wpm), p.verdigris);
-                big_stat(ui, &p, "raw", &format!("{:.0}", result.raw_wpm), p.ghost);
+                ui.spacing_mut().item_spacing.x = 30.0;
+                big_stat(
+                    ui,
+                    &p,
+                    "wpm",
+                    &format!("{:.0}", result.wpm),
+                    p.verdigris,
+                    tips::WPM,
+                );
+                big_stat(
+                    ui,
+                    &p,
+                    "raw",
+                    &format!("{:.0}", result.raw_wpm),
+                    p.ghost,
+                    tips::RAW,
+                );
                 big_stat(
                     ui,
                     &p,
                     "accuracy",
                     &format!("{:.0}%", result.accuracy * 100.0),
                     p.paper,
+                    tips::ACCURACY,
                 );
                 big_stat(
                     ui,
@@ -81,6 +90,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     "consistency",
                     &format!("{:.0}", result.consistency),
                     p.paper,
+                    tips::CONSISTENCY,
                 );
                 big_stat(
                     ui,
@@ -88,8 +98,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     "net wpm",
                     &format!("{:.0}", result.net_wpm),
                     p.ghost,
+                    tips::NET_WPM,
                 );
-                big_stat(ui, &p, "time", &mmss(result.elapsed_secs), p.brass);
+                big_stat(
+                    ui,
+                    &p,
+                    "time",
+                    &mmss(result.elapsed_secs),
+                    p.brass,
+                    tips::TIME,
+                );
             });
 
             ui.add_space(18.0);
@@ -190,21 +208,44 @@ fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.add_space(2.0);
 }
 
-fn big_stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str, color: Color32) {
-    ui.vertical(|ui| {
-        ui.label(
-            egui::RichText::new(value)
-                .color(color)
-                .font(theme::mono_font(38.0)),
-        );
-        ui.label(
-            egui::RichText::new(label)
-                .color(p.ghost)
-                .size(11.0)
-                .extra_letter_spacing(0.8),
-        );
+/// One stat block: the number and its label center-aligned in one column, painted onto
+/// an allocated rect. Every block uses the same fonts and the same vertical geometry, so
+/// a horizontal row of them puts all numbers on one shared baseline with the labels
+/// evenly aligned beneath. The whole block answers hover with a plain-language tip.
+fn big_stat(ui: &mut egui::Ui, p: &Palette, label: &str, value: &str, color: Color32, tip: &str) {
+    let value_font = theme::mono_font(38.0);
+    let label_font = theme::ui_font(11.0);
+    let gap = 4.0;
+    let (v_size, l_size) = ui.fonts_mut(|f| {
+        (
+            f.layout_no_wrap(value.to_string(), value_font.clone(), color)
+                .size(),
+            f.layout_no_wrap(label.to_string(), label_font.clone(), p.ghost)
+                .size(),
+        )
     });
-    ui.add_space(26.0);
+    let w = v_size.x.max(l_size.x);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(w, v_size.y + gap + l_size.y), Sense::hover());
+    let painter = ui.painter();
+    let cx = rect.center().x;
+    // The value fonts are identical across blocks, so anchoring every number's bottom to
+    // the same offset from the block top yields one shared baseline.
+    painter.text(
+        egui::pos2(cx, rect.top() + v_size.y),
+        Align2::CENTER_BOTTOM,
+        value,
+        value_font,
+        color,
+    );
+    painter.text(
+        egui::pos2(cx, rect.top() + v_size.y + gap),
+        Align2::CENTER_TOP,
+        label,
+        label_font,
+        p.ghost,
+    );
+    response.on_hover_text(tip);
 }
 
 fn mmss(secs: f64) -> String {

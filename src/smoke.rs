@@ -191,7 +191,8 @@ fn book_cycle(live: bool) -> Result<(), String> {
     if !s.is_complete() {
         return Err("chapter typing did not complete".into());
     }
-    book.set_typed_progress(1, plain.chars().count(), true);
+    book.set_typed_progress(1, plain.chars().count(), true)
+        .map_err(|e| e.to_string())?;
     let reloaded = store.load(&book.meta.slug).map_err(|e| e.to_string())?;
     if !reloaded.all_chapters_typed() {
         return Err("typed progress did not persist".into());

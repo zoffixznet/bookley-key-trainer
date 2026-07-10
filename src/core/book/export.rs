@@ -66,7 +66,7 @@ pub fn export_markdown(book: &Book) -> String {
 const PDF_TEMPLATE: &str = r##"#import sys: inputs
 
 #set document(title: inputs.title, author: "Bookley Key Trainer")
-#set text(size: 11pt, lang: "en")
+#set text(size: 11pt, lang: inputs.lang)
 #set par(justify: true, leading: 0.72em, first-line-indent: 1.2em)
 
 // Cover: page one, full bleed, before everything else.
@@ -94,6 +94,48 @@ const PDF_TEMPLATE: &str = r##"#import sys: inputs
   #pagebreak(weak: true)
 ]
 "##;
+
+/// Map the book's free-text language name to an ISO 639-1 code for Typst's `lang`
+/// setting (hyphenation, justification, quotes). Unknown languages fall back to "en";
+/// two-letter inputs are trusted as codes already.
+fn lang_code(language: &str) -> String {
+    let lang = language.trim().to_lowercase();
+    let code = match lang.as_str() {
+        "english" => "en",
+        "arabic" => "ar",
+        "chinese" | "mandarin" => "zh",
+        "czech" => "cs",
+        "danish" => "da",
+        "dutch" => "nl",
+        "esperanto" => "eo",
+        "finnish" => "fi",
+        "french" => "fr",
+        "german" => "de",
+        "greek" => "el",
+        "hebrew" => "he",
+        "hindi" => "hi",
+        "hungarian" => "hu",
+        "italian" => "it",
+        "japanese" => "ja",
+        "korean" => "ko",
+        "norwegian" => "no",
+        "polish" => "pl",
+        "portuguese" => "pt",
+        "romanian" => "ro",
+        "russian" => "ru",
+        "spanish" => "es",
+        "swedish" => "sv",
+        "turkish" => "tr",
+        "ukrainian" => "uk",
+        _ => {
+            if lang.len() == 2 && lang.chars().all(|c| c.is_ascii_lowercase()) {
+                return lang;
+            }
+            "en"
+        }
+    };
+    code.to_string()
+}
 
 /// Generate a PDF for `book`. Returns the PDF bytes. Errors are returned as strings so the
 /// UI can show a message instead of panicking.
@@ -139,12 +181,20 @@ pub fn export_pdf(book: &Book) -> Result<Vec<u8>, String> {
     input.insert("title".into(), title.into_value());
     input.insert("cover".into(), cover_value);
     input.insert("chapters".into(), chapters.into_value());
+    input.insert(
+        "lang".into(),
+        lang_code(&book.meta.language).to_string().into_value(),
+    );
 
+    // Fonts: the embedded set (Libertinus, New Computer Modern, DejaVu) is the
+    // deterministic base but covers Latin/Cyrillic/Greek only; system fonts are searched
+    // too so a book in e.g. Japanese or Arabic renders with real glyphs (from the user's
+    // installed fonts) instead of silent tofu boxes.
     let engine = TypstEngine::builder()
         .main_file(PDF_TEMPLATE)
         .search_fonts_with(
             TypstKitFontOptions::default()
-                .include_system_fonts(false)
+                .include_system_fonts(true)
                 .include_embedded_fonts(true),
         )
         .build();
@@ -231,6 +281,31 @@ mod tests {
             plain_pdf.len(),
             cover_pdf.len()
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn lang_code_maps_names_codes_and_unknowns() {
+        assert_eq!(lang_code("English"), "en");
+        assert_eq!(lang_code(" Russian "), "ru");
+        assert_eq!(lang_code("Japanese"), "ja");
+        assert_eq!(lang_code("pt"), "pt", "bare codes pass through");
+        assert_eq!(lang_code("Klingon"), "en", "unknowns fall back to en");
+        assert_eq!(lang_code(""), "en");
+    }
+
+    /// A non-English book compiles with its own language setting and the chapter text
+    /// present (Cyrillic is covered by the embedded fonts).
+    #[test]
+    fn pdf_exports_a_cyrillic_book() {
+        let root = tmp_root();
+        let store = BookStore::new(root.clone());
+        let mut book = store.create("Ночь", "Russian", "", false).unwrap();
+        book.write_chapter(1, "Глава", "Город спал, и только маяк не спал.", "")
+            .unwrap();
+        let pdf = export_pdf(&book).expect("pdf");
+        assert!(pdf.starts_with(b"%PDF"));
+        assert!(pdf.len() > 1000);
         let _ = std::fs::remove_dir_all(&root);
     }
 

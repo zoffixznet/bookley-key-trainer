@@ -1,6 +1,11 @@
 //! The Books manager: a shelf of books with create / continue / generate / rewrite /
 //! export actions, the one-clarifying-turn flow, the blank-input confirmation, and the
 //! live "writing..." view during generation.
+//!
+//! The open book renders as a "book jacket": cover (or a typographic placeholder) beside
+//! the title, status, and progress, with a quiet grouped toolbar under them, a chapters
+//! table, and exactly one prominent next-step block (type the next chapter, generate the
+//! next one, or the finished state), so actions never float around the page.
 
 use crate::core::book::prompt;
 use crate::core::config::ContentMode;
@@ -17,7 +22,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    theme::page_scroll(ui, |ui| {
         theme::centered_column(ui, COLUMN_W, |ui| {
             ui.add_space(22.0);
             ui.horizontal(|ui| {
@@ -65,10 +70,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(12.0);
             }
 
-            // If a book is open, show its detail (chapters, continue, rewrite, export).
+            // If a book is open, show its detail (chapters, continue, rewrite, export),
+            // then a clear divider and heading so the tile grid below reads as a
+            // separate "all books" list rather than part of the open book.
             if let Some(slug) = app.book_ui.open_slug.clone() {
                 book_detail(app, ui, &slug);
-                ui.add_space(16.0);
+                ui.add_space(20.0);
+                ui.separator();
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new("ALL BOOKS")
+                        .color(p.ghost)
+                        .size(10.5)
+                        .extra_letter_spacing(1.4),
+                );
+                ui.add_space(2.0);
             }
 
             // The shelf.
@@ -93,26 +109,64 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// One book on the shelf: a spine-like card with title, language, progress, actions.
+/// The currently open book's tile is unmistakably active: a thicker accent border and
+/// spine, an "OPEN" text badge (the state is never carried by hue alone), and its action
+/// button disabled and relabeled "Opened".
 fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store::Book) {
     let p = app.palette();
     let title = crate::core::book::store::display_title(&book.meta);
     let done = book.meta.chapters.iter().filter(|c| c.done).count();
     let total = book.meta.chapters.len();
-    theme::card(&p).show(ui, |ui| {
+    let is_open = app.book_ui.open_slug.as_deref() == Some(book.meta.slug.as_str());
+    let frame = if is_open {
+        theme::card(&p).stroke(egui::Stroke::new(2.0, p.verdigris))
+    } else {
+        theme::card(&p)
+    };
+    frame.show(ui, |ui| {
         ui.vertical(|ui| {
             ui.set_width(268.0);
             ui.set_min_height(112.0);
-            // Brass spine accent along the top of the card.
-            let (rule, _) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rule, egui::CornerRadius::same(2), p.brass);
+            // Spine accent along the top of the card: brass normally, a thicker
+            // verdigris one on the open book.
+            let spine_h = if is_open { 5.0 } else { 3.0 };
+            let (rule, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), spine_h),
+                egui::Sense::hover(),
+            );
+            ui.painter().rect_filled(
+                rule,
+                egui::CornerRadius::same(2),
+                if is_open { p.verdigris } else { p.brass },
+            );
             ui.add_space(6.0);
-            ui.label(
+            // The title must wrap inside the fixed card width. A Label in a horizontal
+            // layout never wraps (it extends), so a long AI-generated title would blow
+            // the tile out to the full row width; keep the title an explicitly wrapping
+            // label and, on the open book, pin the badge to the card's top-right with a
+            // right-to-left row so the title wraps in the space that remains.
+            let title_label = egui::Label::new(
                 egui::RichText::new(&title)
                     .font(theme::display_font(17.0))
                     .color(p.paper),
-            );
+            )
+            .wrap();
+            if is_open {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.label(
+                        egui::RichText::new(" OPEN ")
+                            .color(p.ink_850)
+                            .background_color(p.verdigris)
+                            .size(10.5)
+                            .strong(),
+                    );
+                    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                        ui.add(title_label);
+                    });
+                });
+            } else {
+                ui.add(title_label);
+            }
             ui.add_space(2.0);
             let mut meta = format!("{done}/{total} chapters typed");
             if !book.meta.language.is_empty() {
@@ -124,9 +178,17 @@ fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store:
             ui.label(egui::RichText::new(meta).color(p.ghost).size(12.0));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
-                if ui.button("Open").clicked() {
+                if is_open {
+                    // Already open: a dead "Open" button confused users, so make the
+                    // state explicit and unclickable.
+                    ui.add_enabled(false, egui::Button::new("Opened"))
+                        .on_disabled_hover_text("This book is already open above.");
+                } else if ui.button("Open").clicked() {
                     app.book_ui.open_slug = Some(book.meta.slug.clone());
                     app.book_ui.status = None;
+                    // Remember the book so the next launch reopens it directly.
+                    app.config.last_book = Some(book.meta.slug.clone());
+                    app.save_config();
                 }
                 if app.book_ui.confirm_delete.as_deref() == Some(&book.meta.slug) {
                     if ui
@@ -139,6 +201,13 @@ fn shelf_card(app: &mut App, ui: &mut egui::Ui, book: &crate::core::book::store:
                         if app.book_ui.open_slug.as_deref() == Some(&book.meta.slug) {
                             app.book_ui.open_slug = None;
                         }
+                        if app.config.last_book.as_deref() == Some(&book.meta.slug) {
+                            app.config.last_book = None;
+                            app.save_config();
+                        }
+                        // A live session typing this book would be a ghost: its saves
+                        // and completion would fail silently. Drop it with the book.
+                        app.invalidate_book_session(&book.meta.slug, None);
                         app.book_ui.confirm_delete = None;
                     }
                     if ui.button("Keep").clicked() {
@@ -189,6 +258,8 @@ fn create_dialog(app: &mut App, ui: &mut egui::Ui) {
                 match app.store.create(&title, &lang, &premise, false) {
                     Ok(book) => {
                         app.book_ui.open_slug = Some(book.meta.slug.clone());
+                        app.config.last_book = Some(book.meta.slug.clone());
+                        app.save_config();
                         app.book_ui.show_create = false;
                         app.book_ui.new_title.clear();
                         app.book_ui.new_premise.clear();
@@ -205,6 +276,18 @@ fn create_dialog(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
+/// Start typing the book's next untyped chapter (the session always serves the first
+/// one that is not done). Remembers the book for the next launch.
+fn start_typing(app: &mut App, slug: &str) {
+    app.config.content_mode = ContentMode::Book;
+    app.book_ui.open_slug = Some(slug.to_string());
+    app.config.last_book = Some(slug.to_string());
+    app.save_config();
+    app.start_session();
+}
+
+/// The open book as a "book jacket" card: cover | title/status/progress, a quiet
+/// toolbar, the chapters table, and one prominent next-step block.
 fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
     let p = app.palette();
     let Ok(book) = app.store.load(slug) else {
@@ -218,166 +301,266 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
         .as_ref()
         .map(|c| c.slug == *slug)
         .unwrap_or(false);
-    ui.horizontal(|ui| {
-        // The cover (page one of the PDF), when one has been generated.
-        if let Some(tex) = &cover_tex {
-            ui.add(egui::Image::new(tex).fit_to_exact_size(egui::vec2(96.0, 154.0)));
-            ui.add_space(4.0);
-        }
-        ui.label(
-            egui::RichText::new(&title)
-                .color(p.brass)
-                .size(20.0)
-                .strong(),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("Close").clicked() {
-                app.book_ui.open_slug = None;
-            }
-            if ui.button("Export PDF").clicked() {
-                export_pdf(app, &book);
-            }
-            if ui.button("Export Markdown").clicked() {
-                export_markdown(app, &book);
-            }
-            // Cover design: same claude plumbing as chapters; always yields a cover
-            // (a local typographic fallback covers a failed design).
-            if cover_designing {
-                if ui.button("Cancel cover").clicked() {
-                    app.cancel_cover();
-                }
-                ui.spinner();
-            } else {
-                let label = if book.has_cover() {
-                    "Regenerate cover"
-                } else {
-                    "Generate cover"
-                };
-                if ui.button(label).clicked() {
-                    app.start_cover_generation();
-                }
-            }
-        });
-    });
-
     let all_typed = book.all_chapters_typed();
     let n_chapters = book.chapter_count();
+    let done = book.meta.chapters.iter().filter(|c| c.done).count();
+    let first_untyped = book.meta.chapters.iter().find(|c| !c.done).map(|c| c.n);
 
-    // Chapter list with per-chapter type/rewrite.
-    for c in &book.meta.chapters {
-        ui.horizontal(|ui| {
-            let heading = if c.title.trim().is_empty() {
-                format!("Chapter {}", c.n)
+    theme::card(&p).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+
+        // Jacket header: cover on the left, identity column on the right.
+        const COVER_SIZE: egui::Vec2 = egui::Vec2::new(120.0, 192.0);
+        ui.horizontal_top(|ui| {
+            if let Some(tex) = &cover_tex {
+                ui.add(egui::Image::new(tex).fit_to_exact_size(COVER_SIZE));
             } else {
-                format!("Chapter {}: {}", c.n, c.title)
-            };
-            let color = if c.done { p.paper } else { p.brass };
-            ui.label(egui::RichText::new(&heading).color(color));
-            ui.label(
-                egui::RichText::new(format!("({} words)", c.words))
-                    .color(p.ghost)
-                    .size(11.0),
-            );
-            if c.done {
-                ui.label(egui::RichText::new("typed").color(p.verdigris).size(11.0));
-            } else if ui.button("Type this chapter").clicked() {
-                app.config.content_mode = ContentMode::Book;
-                app.book_ui.open_slug = Some(slug.to_string());
-                app.save_config();
-                app.start_session();
+                cover_placeholder(ui, &p, &title, COVER_SIZE);
             }
-            if ui.button("Rewrite").clicked() {
-                app.book_ui.rewrite_n = Some(c.n);
-                app.book_ui.rewrite_instruction.clear();
-            }
-        });
-    }
-
-    // Rewrite dialog.
-    if let Some(rn) = app.book_ui.rewrite_n {
-        ui.group(|ui| {
-            ui.label(egui::RichText::new(format!("Rewrite chapter {rn}")).color(p.brass));
-            ui.label(
-                egui::RichText::new(
-                    "Later chapters stay as they are; this rewrite must still fit the book. \
-Rewriting resets this chapter's typing progress.",
-                )
-                .color(p.ghost)
-                .size(12.0),
-            );
-            ui.text_edit_singleline(&mut app.book_ui.rewrite_instruction);
-            ui.horizontal(|ui| {
-                if ui.button("Rewrite now").clicked() {
-                    let prompt =
-                        prompt::rewrite_prompt(&book, rn, &app.book_ui.rewrite_instruction);
-                    app.book_ui.rewrite_n = None;
-                    app.start_generation(rn, true, false, prompt);
+            ui.add_space(14.0);
+            ui.vertical(|ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&title)
+                            .font(theme::display_font(24.0))
+                            .color(p.brass),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(6.0);
+                // Status chip (the word itself is the cue, never hue alone) + meta.
+                ui.horizontal(|ui| {
+                    let (chip, chip_bg) = if book.meta.concluded {
+                        (" FINISHED ", p.verdigris)
+                    } else {
+                        (" WRITING ", p.brass)
+                    };
+                    ui.label(
+                        egui::RichText::new(chip)
+                            .color(p.ink_850)
+                            .background_color(chip_bg)
+                            .size(10.5)
+                            .strong(),
+                    );
+                    let mut meta = format!("{done}/{n_chapters} chapters typed");
+                    if !book.meta.language.is_empty() {
+                        meta = format!("{}  \u{00B7}  {meta}", book.meta.language);
+                    }
+                    ui.label(egui::RichText::new(meta).color(p.ghost).size(12.5));
+                });
+                ui.add_space(10.0);
+                // Binding progress: chapters typed over chapters written.
+                let frac = if n_chapters == 0 {
+                    0.0
+                } else {
+                    done as f32 / n_chapters as f32
+                };
+                let (bar, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width().min(360.0), 6.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter()
+                    .rect_filled(bar, egui::CornerRadius::same(3), p.edge);
+                if frac > 0.0 {
+                    let mut fill = bar;
+                    fill.set_width(bar.width() * frac);
+                    ui.painter()
+                        .rect_filled(fill, egui::CornerRadius::same(3), p.verdigris);
                 }
-                if ui.button("Cancel").clicked() {
-                    app.book_ui.rewrite_n = None;
-                }
+                ui.add_space(12.0);
+                // Quiet grouped toolbar: management actions live here, nowhere else.
+                ui.horizontal_wrapped(|ui| {
+                    if cover_designing {
+                        if ui.button("Cancel cover").clicked() {
+                            app.cancel_cover();
+                        }
+                        ui.spinner();
+                    } else {
+                        let label = if book.has_cover() {
+                            "Regenerate cover"
+                        } else {
+                            "Generate cover"
+                        };
+                        if ui.button(label).clicked() {
+                            app.start_cover_generation();
+                        }
+                    }
+                    if ui.button("Export Markdown").clicked() {
+                        export_markdown(app, &book);
+                    }
+                    if ui.button("Export PDF").clicked() {
+                        export_pdf(app, &book);
+                    }
+                    if ui
+                        .button(egui::RichText::new("Close").color(p.ghost))
+                        .clicked()
+                    {
+                        app.book_ui.open_slug = None;
+                    }
+                });
             });
         });
-    }
 
-    ui.add_space(8.0);
-
-    // The clarifying-turn flow.
-    if let Some(questions) = app.book_ui.pending_questions.clone() {
-        ui.group(|ui| {
-            ui.label(egui::RichText::new("The author asks:").color(p.brass));
-            ui.label(egui::RichText::new(&questions).color(p.paper));
-            ui.label("Your answer:");
-            ui.text_edit_singleline(&mut app.book_ui.clarify_answer);
-            if ui.button("Send answer and write").clicked() {
-                let n = n_chapters + 1;
-                let answer = app.book_ui.clarify_answer.clone();
-                // Re-issue with the answer as continuation, clarifying disabled now.
-                let combined = format!(
-                    "{}\n\nYour earlier questions and my answers:\n{}",
-                    app.book_ui.continuation, answer
-                );
-                let conclude = app.book_ui.make_last;
-                let prompt = prompt::chapter_prompt(&book, n, &combined, false, None, conclude);
-                app.book_ui.pending_questions = None;
-                app.book_ui.clarify_answer.clear();
-                app.start_generation(n, false, conclude, prompt);
-            }
-        });
-        return;
-    }
-
-    // The blank-input confirmation.
-    if app.book_ui.confirm_blank {
-        ui.group(|ui| {
+        // Chapters table.
+        if !book.meta.chapters.is_empty() {
+            ui.add_space(14.0);
+            ui.separator();
+            ui.add_space(6.0);
             ui.label(
-                egui::RichText::new(
-                    "You left the direction blank. Let the author invent everything for \
-this chapter?",
-                )
-                .color(p.brass),
+                egui::RichText::new("CHAPTERS")
+                    .color(p.ghost)
+                    .size(10.5)
+                    .extra_letter_spacing(1.4),
             );
-            ui.horizontal(|ui| {
-                if ui.button("Yes, invent it").clicked() {
+            ui.add_space(4.0);
+            egui::Grid::new("chapters")
+                .num_columns(4)
+                .spacing([14.0, 8.0])
+                .show(ui, |ui| {
+                    for c in &book.meta.chapters {
+                        ui.label(
+                            egui::RichText::new(format!("{:>2}", c.n))
+                                .font(theme::mono_font(13.0))
+                                .color(p.ghost),
+                        );
+                        let heading = if c.title.trim().is_empty() {
+                            format!("Chapter {}", c.n)
+                        } else {
+                            c.title.clone()
+                        };
+                        ui.scope(|ui| {
+                            ui.set_max_width(380.0);
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(heading).color(if c.done {
+                                    p.paper
+                                } else {
+                                    p.brass
+                                }))
+                                .wrap(),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{} words", c.words))
+                                    .color(p.ghost)
+                                    .size(11.5),
+                            );
+                            let (status, color) = if c.done {
+                                ("typed \u{2713}", p.verdigris)
+                            } else if c.typed_chars > 0 {
+                                ("in progress", p.brass)
+                            } else {
+                                ("not typed", p.ghost)
+                            };
+                            ui.label(egui::RichText::new(status).color(color).size(11.5));
+                        });
+                        ui.horizontal(|ui| {
+                            if first_untyped == Some(c.n) {
+                                // The session always serves the first untyped chapter,
+                                // so only that row gets a Type button.
+                                let b = egui::Button::new(
+                                    egui::RichText::new("Type")
+                                        .size(12.5)
+                                        .strong()
+                                        .color(p.ink_850),
+                                )
+                                .fill(p.verdigris);
+                                if ui.add(b).clicked() {
+                                    start_typing(app, slug);
+                                }
+                            }
+                            if ui
+                                .button(egui::RichText::new("Rewrite").color(p.ghost).size(12.0))
+                                .clicked()
+                            {
+                                app.book_ui.rewrite_n = Some(c.n);
+                                app.book_ui.rewrite_instruction.clear();
+                            }
+                        });
+                        ui.end_row();
+                    }
+                });
+        }
+
+        // Rewrite dialog (independent of the next-step block).
+        if let Some(rn) = app.book_ui.rewrite_n {
+            ui.add_space(8.0);
+            ui.group(|ui| {
+                ui.label(egui::RichText::new(format!("Rewrite chapter {rn}")).color(p.brass));
+                ui.label(
+                    egui::RichText::new(
+                        "Later chapters stay as they are; this rewrite must still fit the book. \
+Rewriting resets this chapter's typing progress.",
+                    )
+                    .color(p.ghost)
+                    .size(12.0),
+                );
+                ui.text_edit_singleline(&mut app.book_ui.rewrite_instruction);
+                ui.horizontal(|ui| {
+                    if ui.button("Rewrite now").clicked() {
+                        let prompt =
+                            prompt::rewrite_prompt(&book, rn, &app.book_ui.rewrite_instruction);
+                        app.book_ui.rewrite_n = None;
+                        app.start_generation(rn, true, false, prompt);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        app.book_ui.rewrite_n = None;
+                    }
+                });
+            });
+        }
+
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // Exactly one next-step block: the clarifying turn, the blank-input
+        // confirmation, the finished state, the generate block, or the type prompt.
+        if let Some(questions) = app.book_ui.pending_questions.clone() {
+            ui.group(|ui| {
+                ui.label(egui::RichText::new("The author asks:").color(p.brass));
+                ui.label(egui::RichText::new(&questions).color(p.paper));
+                ui.label("Your answer:");
+                ui.text_edit_singleline(&mut app.book_ui.clarify_answer);
+                if ui.button("Send answer and write").clicked() {
                     let n = n_chapters + 1;
-                    // Blank confirmed: clarifying disabled.
+                    let answer = app.book_ui.clarify_answer.clone();
+                    // Re-issue with the answer as continuation, clarifying disabled now.
+                    let combined = format!(
+                        "{}\n\nYour earlier questions and my answers:\n{}",
+                        app.book_ui.continuation, answer
+                    );
                     let conclude = app.book_ui.make_last;
-                    let prompt = prompt::chapter_prompt(&book, n, "", false, None, conclude);
-                    app.book_ui.confirm_blank = false;
+                    let prompt = prompt::chapter_prompt(&book, n, &combined, false, None, conclude);
+                    app.book_ui.pending_questions = None;
+                    app.book_ui.clarify_answer.clear();
                     app.start_generation(n, false, conclude, prompt);
                 }
-                if ui.button("No, let me add direction").clicked() {
-                    app.book_ui.confirm_blank = false;
-                }
             });
-        });
-        return;
-    }
-
-    // Generate-next-chapter block (gated on all chapters being typed), or the finished
-    // state once the book is concluded.
-    if book.meta.concluded {
-        ui.group(|ui| {
+        } else if app.book_ui.confirm_blank {
+            ui.group(|ui| {
+                ui.label(
+                    egui::RichText::new(
+                        "You left the direction blank. Let the author invent everything for \
+this chapter?",
+                    )
+                    .color(p.brass),
+                );
+                ui.horizontal(|ui| {
+                    if ui.button("Yes, invent it").clicked() {
+                        let n = n_chapters + 1;
+                        // Blank confirmed: clarifying disabled.
+                        let conclude = app.book_ui.make_last;
+                        let prompt = prompt::chapter_prompt(&book, n, "", false, None, conclude);
+                        app.book_ui.confirm_blank = false;
+                        app.start_generation(n, false, conclude, prompt);
+                    }
+                    if ui.button("No, let me add direction").clicked() {
+                        app.book_ui.confirm_blank = false;
+                    }
+                });
+            });
+        } else if book.meta.concluded {
             ui.label(
                 egui::RichText::new("This book is finished.")
                     .color(p.brass)
@@ -392,9 +575,23 @@ still possible."
                 })
                 .color(p.ghost),
             );
-        });
-    } else if n_chapters == 0 || all_typed {
-        ui.group(|ui| {
+            if !all_typed {
+                if let Some(n) = first_untyped {
+                    ui.add_space(6.0);
+                    let b = egui::Button::new(
+                        egui::RichText::new(format!("Type chapter {n}"))
+                            .size(15.0)
+                            .strong()
+                            .color(p.ink_850),
+                    )
+                    .fill(p.verdigris)
+                    .min_size(egui::vec2(210.0, 40.0));
+                    if ui.add(b).clicked() {
+                        start_typing(app, slug);
+                    }
+                }
+            }
+        } else if n_chapters == 0 || all_typed {
             let next_n = n_chapters + 1;
             ui.label(
                 egui::RichText::new(if next_n == 1 {
@@ -416,7 +613,16 @@ still possible."
                 &mut app.book_ui.make_last,
                 "Make this chapter the last chapter of the book",
             );
-            if ui.button("Generate next chapter").clicked() {
+            ui.add_space(4.0);
+            let b = egui::Button::new(
+                egui::RichText::new("Generate next chapter")
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink_850),
+            )
+            .fill(p.verdigris)
+            .min_size(egui::vec2(210.0, 40.0));
+            if ui.add(b).clicked() {
                 let cont = app.book_ui.continuation.trim().to_string();
                 if cont.is_empty() {
                     // Blank input: confirm they want fully AI-invented content.
@@ -428,13 +634,67 @@ still possible."
                     app.start_generation(next_n, false, conclude, prompt);
                 }
             }
-        });
-    } else {
-        ui.label(
-            egui::RichText::new("Finish typing every generated chapter to unlock the next one.")
-                .color(p.ghost),
-        );
-    }
+        } else if let Some(n) = first_untyped {
+            let b = egui::Button::new(
+                egui::RichText::new(format!("Type chapter {n}"))
+                    .size(15.0)
+                    .strong()
+                    .color(p.ink_850),
+            )
+            .fill(p.verdigris)
+            .min_size(egui::vec2(210.0, 40.0));
+            ui.horizontal(|ui| {
+                if ui.add(b).clicked() {
+                    start_typing(app, slug);
+                }
+                ui.add_space(8.0);
+                ui.label(
+                    egui::RichText::new(
+                        "Finish typing every generated chapter to unlock the next one.",
+                    )
+                    .color(p.ghost),
+                );
+            });
+        }
+    });
+}
+
+/// A typographic placeholder where the cover goes before one is generated: the book's
+/// initial on an ink field with a brass rule, so the jacket layout holds its shape.
+fn cover_placeholder(ui: &mut egui::Ui, p: &theme::Palette, title: &str, size: egui::Vec2) {
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, egui::CornerRadius::same(4), p.ink_950);
+    painter.rect_stroke(
+        rect,
+        egui::CornerRadius::same(4),
+        egui::Stroke::new(1.0, p.edge),
+        egui::StrokeKind::Inside,
+    );
+    let rule = egui::Rect::from_min_size(
+        rect.min + egui::vec2(14.0, 24.0),
+        egui::vec2(rect.width() - 28.0, 2.0),
+    );
+    painter.rect_filled(rule, egui::CornerRadius::same(1), p.brass);
+    let initial = title
+        .chars()
+        .find(|c| c.is_alphanumeric())
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "B".to_string());
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        initial,
+        theme::display_font(54.0),
+        p.brass,
+    );
+    painter.text(
+        egui::pos2(rect.center().x, rect.max.y - 16.0),
+        egui::Align2::CENTER_CENTER,
+        "no cover yet",
+        theme::ui_font(10.0),
+        p.ghost,
+    );
 }
 
 fn writing_view(app: &mut App, ui: &mut egui::Ui) {
@@ -471,6 +731,7 @@ fn writing_view(app: &mut App, ui: &mut egui::Ui) {
             egui::ScrollArea::vertical()
                 .max_height(380.0)
                 .stick_to_bottom(true)
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                 .show(ui, |ui| {
                     if let Some(gen) = &app.gen {
                         // Strip the markers from the live view for readability.

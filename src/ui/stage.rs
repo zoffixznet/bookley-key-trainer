@@ -48,6 +48,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
 
+    // The whole stage area (central panel plus its default 8px inner margin, clamped to
+    // the window): the start-gate overlay scrims exactly this region.
+    let stage_rect = ui.max_rect().expand(8.0).intersect(ui.ctx().content_rect());
+
     // Keyboard docked at the bottom first (so the central column gets the remainder).
     let next_key = app.session.as_ref().and_then(|s| s.next_physical_key());
     let needs_shift = app
@@ -140,58 +144,103 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         }
-
-        // Press-Space-to-start gate: shown until the first Space starts the clock.
-        if app.awaiting_start && !paused {
-            start_gate(app, ui);
-        }
     });
+
+    // Press-Space-to-start gate: a modal overlay over the whole stage until the first
+    // Space starts the clock.
+    if app.awaiting_start && !app.is_paused() {
+        start_gate_overlay(app, ui, stage_rect);
+    }
 }
 
-/// The pre-drill gate: a clear "Press Space to start" plus, for the timed drills, a quick
-/// duration picker so drill length is not buried in Settings. Picking a duration applies
-/// to this (not yet started) drill and persists as the new default.
-fn start_gate(app: &mut App, ui: &mut egui::Ui) {
+/// The pre-drill gate as a modal overlay: a translucent dark scrim veils the whole stage
+/// (and swallows pointer input), and a centered card carries a large "Press Space to
+/// start" plus, for the timed drills, the duration picker so drill length is not buried
+/// in Settings. Picking a duration applies to this (not yet started) drill and persists
+/// as the new default. Deliberately static: nothing animates, so reduced-motion needs no
+/// special casing.
+fn start_gate_overlay(app: &mut App, ui: &mut egui::Ui, stage_rect: Rect) {
     let p = app.palette();
-    ui.add_space(14.0);
-    ui.vertical_centered(|ui| {
-        ui.label(
-            egui::RichText::new("Press Space to start")
-                .font(theme::display_font(26.0))
-                .color(p.verdigris),
-        );
-        ui.label(
-            egui::RichText::new("The clock starts on Space; that press isn't counted as typing.")
-                .color(p.ghost)
-                .size(13.0),
-        );
-        let timed = matches!(
-            app.config.content_mode,
-            ContentMode::Random | ContentMode::Word
-        );
-        if timed {
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                // Center the segmented control on the column.
-                let seg_w = 5.0 * 46.0 + 90.0;
-                ui.add_space(((ui.available_width() - seg_w) / 2.0).max(0.0));
-                ui.label(egui::RichText::new("Duration:").color(p.ghost).size(12.5));
-                for (secs, label) in crate::core::config::DRILL_PRESETS {
-                    if ui
-                        .selectable_label(app.config.drill_secs == secs, label)
-                        .clicked()
-                    {
-                        app.config.drill_secs = secs;
-                        app.save_config();
-                        // The drill has not started yet: apply to it directly.
-                        if let Some(s) = app.session.as_mut() {
-                            s.time_limit_secs = Some(secs as f64);
+    let ctx = ui.ctx().clone();
+    let timed = matches!(
+        app.config.content_mode,
+        ContentMode::Random | ContentMode::Word
+    );
+
+    // The scrim: dark and translucent on both themes; it eats clicks so nothing behind
+    // the gate is reachable while the gate is up.
+    egui::Area::new(egui::Id::new("start_gate_scrim"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(stage_rect.min)
+        .show(&ctx, |ui| {
+            ui.allocate_rect(stage_rect, Sense::click_and_drag());
+            ui.painter().rect_filled(
+                stage_rect,
+                CornerRadius::ZERO,
+                Color32::from_black_alpha(135),
+            );
+        });
+
+    // The gate card, centered on the stage (later Areas of the same order paint on top
+    // of the scrim).
+    let offset = stage_rect.center() - ctx.content_rect().center();
+    egui::Area::new(egui::Id::new("start_gate_card"))
+        .order(egui::Order::Foreground)
+        .anchor(Align2::CENTER_CENTER, offset)
+        .show(&ctx, |ui| {
+            egui::Frame::new()
+                .fill(p.ink_850)
+                .stroke(Stroke::new(2.0, p.verdigris))
+                .corner_radius(CornerRadius::same(14))
+                .inner_margin(egui::Margin::symmetric(36, 26))
+                .show(ui, |ui| {
+                    ui.set_width(480.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            egui::RichText::new("Press Space to start")
+                                .font(theme::display_font(34.0))
+                                .color(p.verdigris),
+                        );
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new(
+                                "The clock starts on Space; that press isn't counted as typing.",
+                            )
+                            .color(p.ghost)
+                            .size(13.5),
+                        );
+                        if timed {
+                            ui.add_space(14.0);
+                            ui.label(
+                                egui::RichText::new("DRILL DURATION")
+                                    .color(p.ghost)
+                                    .size(10.5)
+                                    .extra_letter_spacing(1.4),
+                            );
+                            ui.add_space(2.0);
+                            ui.horizontal(|ui| {
+                                // Center the segmented control on the card.
+                                let n = crate::core::config::DRILL_PRESETS.len() as f32;
+                                let seg_w = n * 52.0;
+                                ui.add_space(((ui.available_width() - seg_w) / 2.0).max(0.0));
+                                for (secs, label) in crate::core::config::DRILL_PRESETS {
+                                    if ui
+                                        .selectable_label(app.config.drill_secs == secs, label)
+                                        .clicked()
+                                    {
+                                        app.config.drill_secs = secs;
+                                        app.save_config();
+                                        // The drill has not started yet: apply directly.
+                                        if let Some(s) = app.session.as_mut() {
+                                            s.time_limit_secs = Some(secs as f64);
+                                        }
+                                    }
+                                }
+                            });
                         }
-                    }
-                }
-            });
-        }
-    });
+                    });
+                });
+        });
 }
 
 /// The stats HUD: one aligned baseline of tabular numbers on the play column.
@@ -232,13 +281,28 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.allocate_exact_size(Vec2::new(0.0, row_h), Sense::hover());
         ui.add_space(-ui.spacing().item_spacing.x);
-        stat(ui, &p, &format!("{wpm:.0}"), "wpm", p.verdigris);
-        stat(ui, &p, &format!("{raw:.0}"), "raw", p.ghost);
-        stat(ui, &p, &format!("{acc:.0}%"), "accuracy", p.paper);
-        stat(ui, &p, &format!("{cons:.0}"), "consistency", p.paper);
-        stat(ui, &p, &time_str, "time", p.brass);
+        use theme::stat_tips as tips;
+        stat(ui, &p, &format!("{wpm:.0}"), "wpm", p.verdigris, tips::WPM);
+        stat(ui, &p, &format!("{raw:.0}"), "raw", p.ghost, tips::RAW);
+        stat(
+            ui,
+            &p,
+            &format!("{acc:.0}%"),
+            "accuracy",
+            p.paper,
+            tips::ACCURACY,
+        );
+        stat(
+            ui,
+            &p,
+            &format!("{cons:.0}"),
+            "consistency",
+            p.paper,
+            tips::CONSISTENCY,
+        );
+        stat(ui, &p, &time_str, "time", p.brass, tips::TIME_LIVE);
         if !right_str.is_empty() {
-            stat(ui, &p, &right_str, "progress", p.ghost);
+            stat(ui, &p, &right_str, "progress", p.ghost, tips::PROGRESS);
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             // Pause / resume control (meaningless before the clock starts).
@@ -277,8 +341,9 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// One HUD metric, painted onto an allocated rect so every value and unit label in the
-/// row shares a single text baseline (nested layouts drift by a few pixels).
-fn stat(ui: &mut egui::Ui, p: &Palette, value: &str, label: &str, color: Color32) {
+/// row shares a single text baseline (nested layouts drift by a few pixels). Hovering
+/// the metric explains it in plain language.
+fn stat(ui: &mut egui::Ui, p: &Palette, value: &str, label: &str, color: Color32, tip: &str) {
     let value_font = theme::mono_font(21.0);
     let label_font = theme::ui_font(11.5);
     let (vw, vh, lw) = ui.fonts_mut(|f| {
@@ -286,7 +351,8 @@ fn stat(ui: &mut egui::Ui, p: &Palette, value: &str, label: &str, color: Color32
         let lg = f.layout_no_wrap(label.to_string(), label_font.clone(), p.ghost);
         (vg.size().x, vg.size().y, lg.size().x)
     });
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(vw + 5.0 + lw, vh), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(vw + 5.0 + lw, vh), Sense::hover());
+    response.on_hover_text(tip);
     let painter = ui.painter();
     // Both texts anchor to the same bottom line: one shared baseline.
     let bottom = rect.bottom() - 2.0;

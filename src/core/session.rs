@@ -213,10 +213,13 @@ impl Session {
     }
 
     fn apply(&mut self, correct: bool, phys: Option<Key>, now_secs: f64) -> Progress {
-        // Stop-on-word: at a word boundary with unfixed errors in the word, block even a
-        // correct boundary press; the user must backspace and fix the word first.
-        let word_block =
-            self.error_mode == ErrorMode::Word && self.at_word_boundary() && self.word_has_errors();
+        // Stop-on-word: at a word boundary, block any press that is not a clean, correct
+        // boundary keystroke — a wrong key must never slip past the boundary (it would
+        // land an uncorrectable error there), and with unfixed errors in the word even a
+        // correct boundary press blocks until the user backspaces and fixes the word.
+        let word_block = self.error_mode == ErrorMode::Word
+            && self.at_word_boundary()
+            && (self.word_has_errors() || !correct);
         let counted_correct = correct && !word_block;
 
         let latency = self.latency_ms(now_secs);
@@ -260,8 +263,12 @@ impl Session {
 
     fn advance(&mut self) {
         self.cursor += 1;
-        // Track word boundaries for stop-on-word (space or physical-key boundary).
-        if let Some(Expected::Char(' ')) = self.target.items.get(self.cursor.wrapping_sub(1)) {
+        // Track word boundaries for stop-on-word: both boundary characters (space and
+        // newline) start a fresh word, matching `at_word_boundary`.
+        if matches!(
+            self.target.items.get(self.cursor.wrapping_sub(1)),
+            Some(Expected::Char(' ')) | Some(Expected::Char('\n'))
+        ) {
             self.word_start = self.cursor;
         }
         if self.cursor >= self.target.len() {
@@ -291,11 +298,23 @@ impl Session {
 
     // ------- Dev-mode shortcuts -------
 
+    /// Dev input means "register as correctly typed": clear any unfixed errors in the
+    /// current word first, so stop-on-word can never block a dev keystroke (a Blocked
+    /// result makes zero progress and would spin `dev_complete_all` forever).
+    fn dev_clear_word_errors(&mut self) {
+        for st in &mut self.status[self.word_start..self.cursor] {
+            if *st == CharStatus::Wrong {
+                *st = CharStatus::Correct;
+            }
+        }
+    }
+
     /// Dev: register the currently-expected item as correctly typed and advance.
     pub fn dev_autotype_next(&mut self, now_secs: f64) -> Progress {
         if self.complete {
             return Progress::Complete;
         }
+        self.dev_clear_word_errors();
         let phys = self.expected().and_then(|e| e.physical_key());
         self.apply(true, phys, now_secs)
     }
@@ -305,8 +324,7 @@ impl Session {
     pub fn dev_complete_page(&mut self, now_secs: f64) {
         let mut n = 0;
         while !self.complete && n < 200 {
-            let phys = self.expected().and_then(|e| e.physical_key());
-            self.apply(true, phys, now_secs);
+            self.dev_autotype_next(now_secs);
             n += 1;
         }
     }
@@ -314,8 +332,7 @@ impl Session {
     /// Dev: complete the whole current target (chapter / full text) as correct.
     pub fn dev_complete_all(&mut self, now_secs: f64) {
         while !self.complete {
-            let phys = self.expected().and_then(|e| e.physical_key());
-            self.apply(true, phys, now_secs);
+            self.dev_autotype_next(now_secs);
         }
     }
 
@@ -365,6 +382,56 @@ mod tests {
         assert_eq!(s.input_char(' ', 0.6), Progress::Advanced);
         assert_eq!(s.input_char('c', 0.7), Progress::Advanced);
         assert_eq!(s.input_char('d', 0.8), Progress::Complete);
+    }
+
+    /// A wrong keystroke where the SPACE itself is expected must block (not advance):
+    /// letting it through would land an error on the boundary that backspace can never
+    /// reach once word_start moves past it.
+    #[test]
+    fn stop_on_word_blocks_wrong_key_at_the_boundary() {
+        let mut s = Session::new(Target::from_text("ab cd", "t"), ErrorMode::Word);
+        assert_eq!(s.input_char('a', 0.1), Progress::Advanced);
+        assert_eq!(s.input_char('b', 0.2), Progress::Advanced);
+        // Word is clean; a wrong key at the expected space is blocked, not advanced.
+        assert_eq!(s.input_char('x', 0.3), Progress::Blocked);
+        assert_eq!(s.cursor, 2, "cursor must not cross the boundary");
+        // The correct space then advances normally.
+        assert_eq!(s.input_char(' ', 0.4), Progress::Advanced);
+        assert_eq!(s.input_char('c', 0.5), Progress::Advanced);
+        assert_eq!(s.input_char('d', 0.6), Progress::Complete);
+    }
+
+    /// Newlines are word boundaries too: an error on the previous line must not bleed
+    /// into (and block) a cleanly typed word on the next line.
+    #[test]
+    fn stop_on_word_resets_word_start_at_newlines() {
+        let mut s = Session::new(Target::from_text("ab\ncd ef", "t"), ErrorMode::Word);
+        assert_eq!(s.input_char('a', 0.1), Progress::Advanced);
+        assert_eq!(s.input_char('b', 0.2), Progress::Advanced);
+        assert_eq!(s.input_char('\n', 0.3), Progress::Advanced);
+        // An error inside "cd" is correctable without crossing the newline...
+        assert_eq!(s.input_char('x', 0.4), Progress::AdvancedWithError);
+        s.backspace();
+        assert_eq!(s.cursor, 3, "backspace stops at the newline word start");
+        // ...and a cleanly typed "cd" passes its trailing space unblocked.
+        assert_eq!(s.input_char('c', 0.5), Progress::Advanced);
+        assert_eq!(s.input_char('d', 0.6), Progress::Advanced);
+        assert_eq!(s.input_char(' ', 0.7), Progress::Advanced);
+        assert_eq!(s.input_char('e', 0.8), Progress::Advanced);
+        assert_eq!(s.input_char('f', 0.9), Progress::Complete);
+    }
+
+    /// F12 (complete chapter) in stop-on-word mode with an unfixed error must terminate:
+    /// the dev path registers everything as correctly typed instead of spinning on the
+    /// word-boundary block forever (a UI-thread hang).
+    #[test]
+    fn dev_complete_all_finishes_past_a_word_block() {
+        let mut s = Session::new(Target::from_text("ab cd", "t"), ErrorMode::Word);
+        assert_eq!(s.input_char('x', 0.1), Progress::AdvancedWithError);
+        assert_eq!(s.input_char('b', 0.2), Progress::Advanced);
+        s.dev_complete_all(1.0);
+        assert!(s.is_complete(), "dev complete must not spin forever");
+        assert!(!s.status.contains(&CharStatus::Wrong));
     }
 
     #[test]

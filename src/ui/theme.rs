@@ -199,25 +199,64 @@ pub fn apply_style(ctx: &egui::Context, theme: Theme) {
     visuals.widgets.noninteractive.bg_fill = p.ink_850;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.edge);
     visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, p.paper);
-    visuals.widgets.inactive.bg_fill = p.ink_850;
+    // Idle small controls (checkbox boxes, slider rails) are drawn with bg_fill and
+    // bg_stroke and usually sit on ink_850 cards: with bg_fill = ink_850 and the faint
+    // `edge` stroke an unchecked checkbox was nearly invisible. Fill them with the
+    // window ground (a subtle well against the card) and outline them with `ghost`,
+    // which reads clearly on both themes. Buttons keep their key_face weak_bg_fill;
+    // only the outline color changes, never the stroke width, so the
+    // no-shift-on-hover invariant below still holds.
+    visuals.widgets.inactive.bg_fill = p.ink_950;
     visuals.widgets.inactive.weak_bg_fill = p.key_face;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.edge);
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, p.ghost);
     visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, p.paper);
     visuals.widgets.hovered.bg_fill = p.verdigris.linear_multiply(0.18);
     visuals.widgets.hovered.weak_bg_fill = p.verdigris.linear_multiply(0.14);
     visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, p.verdigris);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, p.paper);
     visuals.widgets.active.bg_fill = p.verdigris.linear_multiply(0.4);
     visuals.widgets.active.weak_bg_fill = p.verdigris.linear_multiply(0.3);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, p.verdigris);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, p.paper);
+    visuals.widgets.open.bg_fill = p.ink_850;
+    visuals.widgets.open.weak_bg_fill = p.ink_850;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, p.edge);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, p.paper);
+    // Labels must never move on hover. egui sizes a button's frame as
+    // button_padding + expansion - bg_stroke.width (the stroke is then added back to the
+    // total margin when the frame is drawn), but an UNSELECTED selectable label draws no
+    // frame at all while idle, so its stroke never gets added back. Its idle padding is
+    // therefore short by (bg_stroke.width - expansion); on hover the frame appears and
+    // the label shifts by exactly that much. Keeping every interactive state at the SAME
+    // stroke width and the SAME expansion, with expansion == stroke width, makes the
+    // idle and hovered layouts identical, so nothing shifts, app-wide.
+    for w in [
+        &mut visuals.widgets.inactive,
+        &mut visuals.widgets.hovered,
+        &mut visuals.widgets.active,
+        &mut visuals.widgets.open,
+    ] {
+        w.expansion = w.bg_stroke.width;
+    }
     let radius = CornerRadius::same(6);
     visuals.widgets.noninteractive.corner_radius = radius;
     visuals.widgets.inactive.corner_radius = radius;
     visuals.widgets.hovered.corner_radius = radius;
     visuals.widgets.active.corner_radius = radius;
+    visuals.widgets.open.corner_radius = radius;
     visuals.window_corner_radius = CornerRadius::same(10);
     ctx.all_styles_mut(|style| {
         style.visuals = visuals.clone();
         style.spacing.item_spacing = egui::vec2(8.0, 8.0);
         style.spacing.button_padding = egui::vec2(12.0, 7.0);
+        // Scrollbars: solid (they reserve their own lane instead of floating over the
+        // content), wide enough to grab, and high-contrast (the handle uses the text
+        // color, so it reads on both themes).
+        style.spacing.scroll = egui::style::ScrollStyle::solid();
+        style.spacing.scroll.bar_width = 12.0;
+        style.spacing.scroll.handle_min_length = 24.0;
+        style.spacing.scroll.bar_inner_margin = 6.0;
+        style.spacing.scroll.foreground_color = true;
         // A slightly larger, calmer type scale.
         style
             .text_styles
@@ -235,6 +274,34 @@ pub fn apply_style(ctx: &egui::Context, theme: Theme) {
             .text_styles
             .insert(egui::TextStyle::Monospace, mono_font(14.0));
     });
+}
+
+/// Plain-language explanations for every stat, shared by the results screen and the live
+/// HUD so hovering any number tells the user what it means.
+pub mod stat_tips {
+    pub const WPM: &str = "Words per minute: correctly typed characters, five per word, \
+per minute of active typing.";
+    pub const RAW: &str = "Raw WPM: every keystroke counted, right or wrong, five per \
+word per minute. Speed ignoring accuracy.";
+    pub const ACCURACY: &str = "Correct keystrokes as a share of all keystrokes.";
+    pub const CONSISTENCY: &str =
+        "How steady your pace was, 0-100; higher means fewer bursts and stalls.";
+    pub const NET_WPM: &str =
+        "The classic exam formula: gross WPM minus one per uncorrected error per minute.";
+    pub const TIME: &str = "Active typing time; pauses do not count.";
+    pub const TIME_LIVE: &str =
+        "Active typing time; pauses do not count. Timed drills show the time left.";
+    pub const PROGRESS: &str = "How much of the text you have typed so far.";
+}
+
+/// The app-wide full-page scroll area. It spans the whole window (no auto-shrink) so the
+/// always-visible scrollbar hugs the window edge instead of floating mid-page; the
+/// content centers itself inside it.
+pub fn page_scroll(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+        .show(ui, |ui| add(ui));
 }
 
 /// A centered content column: everything on screen lives on this grid.
@@ -279,4 +346,47 @@ pub fn card(p: &Palette) -> egui::Frame {
         .stroke(Stroke::new(1.0, p.edge))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(18, 14))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Hovering must never move a label: every interactive widget state shares one
+    /// bg-stroke width and one expansion, and expansion equals the stroke width (the
+    /// frameless-idle selectable-label case sizes as padding + expansion - stroke_width,
+    /// while framed states size as exactly padding; equality keeps them identical).
+    #[test]
+    fn widget_states_never_shift_on_hover() {
+        for theme in [Theme::Light, Theme::Dark] {
+            let ctx = egui::Context::default();
+            apply_style(&ctx, theme);
+            // apply_style writes the same visuals into every egui style slot.
+            let style = ctx.style_of(egui::Theme::Dark);
+            let w = &style.visuals.widgets;
+            let states = [
+                ("inactive", &w.inactive),
+                ("hovered", &w.hovered),
+                ("active", &w.active),
+                ("open", &w.open),
+            ];
+            let width = w.inactive.bg_stroke.width;
+            let expansion = w.inactive.expansion;
+            for (name, s) in states {
+                assert_eq!(
+                    s.bg_stroke.width, width,
+                    "{theme:?}/{name}: bg stroke width differs across states"
+                );
+                assert_eq!(
+                    s.expansion, expansion,
+                    "{theme:?}/{name}: expansion differs across states"
+                );
+                assert_eq!(
+                    s.expansion, s.bg_stroke.width,
+                    "{theme:?}/{name}: expansion must equal stroke width or idle \
+selectable labels shift on hover"
+                );
+            }
+        }
+    }
 }

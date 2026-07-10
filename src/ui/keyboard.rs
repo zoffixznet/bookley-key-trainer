@@ -30,21 +30,30 @@ impl FlashState {
         self.pressed_at.insert(CapId::ShiftL, now);
         self.pressed_at.insert(CapId::ShiftR, now);
     }
-    /// Drop entries older than the fade window to keep the map small.
+    /// Drop entries older than the fade window to keep the map small. Entries stamped
+    /// in the FUTURE (the session clock rewound under them: reset stats, new session)
+    /// are stale too — keeping them would leave keys lit and repaints flooding until
+    /// the new clock caught up to the old timestamps.
     pub fn prune(&mut self, now: f64, fade: f64) {
-        self.pressed_at.retain(|_, t| now - *t < fade);
+        self.pressed_at
+            .retain(|_, t| (0.0..fade).contains(&(now - *t)));
     }
     fn intensity(&self, id: CapId, now: f64, fade: f64) -> f32 {
         match self.pressed_at.get(&id) {
             Some(t) => {
-                let age = (now - *t).max(0.0);
+                let age = now - *t;
+                if age < 0.0 {
+                    return 0.0; // clock rewound; prune drops it
+                }
                 (1.0 - (age / fade)).clamp(0.0, 1.0) as f32
             }
             None => 0.0,
         }
     }
     pub fn is_animating(&self, now: f64, fade: f64) -> bool {
-        self.pressed_at.values().any(|t| now - *t < fade)
+        self.pressed_at
+            .values()
+            .any(|t| (0.0..fade).contains(&(now - *t)))
     }
 }
 
@@ -232,4 +241,37 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A session-clock rewind (reset stats / new session) must not leave stale flashes
+    /// "animating" (repaint flood) or fully lit (frozen brass keys) under the new clock.
+    #[test]
+    fn clock_rewind_does_not_strand_flashes() {
+        let mut flash = FlashState::default();
+        flash.press(Key::A, 119.8);
+        flash.press_shift(119.9);
+
+        // The clock rewinds to 0: the old entries are neither animating nor visible.
+        assert!(
+            !flash.is_animating(0.0, 0.5),
+            "future stamps are not animating"
+        );
+        assert_eq!(flash.intensity(CapId::K(Key::A), 0.0, FADE_SECS), 0.0);
+        flash.prune(0.0, 1.0);
+        assert!(
+            flash.pressed_at.is_empty(),
+            "prune drops future-stamped entries"
+        );
+
+        // Normal life continues on the fresh clock.
+        flash.press(Key::B, 0.1);
+        assert!(flash.is_animating(0.2, 0.5));
+        assert!(flash.intensity(CapId::K(Key::B), 0.2, FADE_SECS) > 0.0);
+        flash.prune(2.0, 1.0);
+        assert!(!flash.is_animating(2.0, 0.5));
+    }
 }

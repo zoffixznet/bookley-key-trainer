@@ -95,8 +95,8 @@ each; newest at the bottom of each section.
 - Resuming a partially typed chapter restarts that chapter (superseded in the third
   review batch: typing progress now persists per chapter and resumes with a
   one-paragraph rewind; see below).
-- No audio subsystem shipped, so there is no sound toggle in Settings (a dead toggle is
-  worse than none); the config field remains and persists for forward compatibility.
+- No audio subsystem shipped in the first build (superseded: the key sound landed later;
+  see the "Key sound" section below).
 - Space is matched via egui Text events only (it produces one); Enter/Tab via key events
   (they do not). Matching both would double-count Space.
 - Dev shortcuts: F9 auto-type (repeat-friendly), F10 completes a ~200-item "page", F12
@@ -190,10 +190,14 @@ each; newest at the bottom of each section.
 
 ## Key sound
 
-- The typewriter click is synthesized procedurally (filtered-noise burst over a resonant
-  thump, deterministic buffers, a few percent of per-press pitch/volume variation) so no
-  sample files are bundled and there is nothing to license. rodio is pulled with only its
-  playback feature; the click PCM never needs decoders.
+- The typewriter click uses five real CC0 (public-domain) recordings bundled under
+  assets/sounds/ and embedded in the binary: three distinct single-key strokes
+  (Freesound, yottasounds) for ordinary keys and two deeper Hermes Precisa 305 thunks
+  (BigSoundBank, Joseph Sardin) for Space/Enter/Backspace, each played with a few
+  percent of per-press pitch/volume variation. Sources and licenses are in NOTICE and in
+  the sound.rs module doc. rodio carries playback + wav decoding only; decoding happens
+  once at init. The original procedural synth stays in the binary as an automatic
+  fallback if a bundled sample ever fails to decode (one log line, no crash).
 - The audio device opens lazily on the first click. If it fails (headless run, no
   device), sound latches off after one log line and the app carries on silently, so the
   smoke test and CI need no audio stack at runtime. Building does require the ALSA dev
@@ -202,3 +206,35 @@ each; newest at the bottom of each section.
   before the feature, including ones carrying the never-surfaced sound=false stub, come
   up with the click on by default. The top-bar switch is session-only; Settings holds the
   launch default.
+
+## Round-4 review and bug sweep
+
+- An adversarial review plus a five-area bug hunt (two-skeptic verification per finding)
+  ran over the whole codebase; 14 confirmed bugs were fixed. Highlights: all book-store
+  writes (book.toml, bible, chapters, cover) are tmp+fsync+rename atomic so a torn write
+  cannot orphan a book, and typed-progress save errors surface in the UI; the Connect
+  Claude PTY scrape no longer truncates tokens/URLs split across read boundaries; cancel
+  kills a silent generation child within one watchdog tick; a mid-stream read error can
+  no longer forge a successful generation; timed drills auto-pause off the typing screen
+  and results are labeled with the session's own mode; all content-mode switches go
+  through one transition path; rewriting or deleting a book invalidates any live typing
+  session on it; stale keyboard flashes cannot survive a clock reset.
+- ASCII normalization guard: if folding would delete most of the letters (non-Latin
+  scripts such as Russian), the original characters are kept as the typing target
+  instead of collapsing the chapter to punctuation; smart punctuation and whitespace
+  rules still apply.
+- PDF export includes system fonts (embedded fonts remain the deterministic base) and
+  sets the Typst text language from the book's language field for hyphenation.
+- The hover label shift was egui 0.35's selectable-button frame sizing; every
+  interactive widget state now uses equal stroke widths with expansion equal to the
+  stroke width (unit-tested), so labels never move on hover. Side effect: widgets no
+  longer grow a pixel on hover anywhere.
+- Screenshot mode gained a hidden BOOKLEY_SHOT_DELAY_MS env var so external drivers
+  (xdotool) can position the real pointer before capture, making hover states and
+  tooltips screenshot-verifiable.
+- Book jacket redesign: the open book renders as cover (or a typographic placeholder)
+  beside title/status/progress with one grouped toolbar, a chapters table where only the
+  first untyped chapter gets a Type button (the session always serves that chapter), and
+  exactly one prominent next-step block. The app remembers the last open book
+  (config: last_book); Book-mode launches reopen it straight onto the typing stage with
+  the Space gate armed.

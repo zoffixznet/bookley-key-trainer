@@ -132,6 +132,10 @@ pub struct Config {
     pub random_round_len: usize,
     /// Model alias for book generation.
     pub book_model: String,
+    /// The most recently opened book (slug). In Book mode the app reopens it at launch
+    /// and serves its next chapter directly, so the user just presses Space and types.
+    #[serde(default)]
+    pub last_book: Option<String>,
     /// Timed-drill duration in seconds (Word and Random modes).
     #[serde(default = "default_drill_secs")]
     pub drill_secs: u64,
@@ -171,6 +175,7 @@ impl Default for Config {
             random_round_len: 30,
             // Spec: novel generation defaults to Opus; changeable in Settings.
             book_model: "opus".to_string(),
+            last_book: None,
             drill_secs: default_drill_secs(),
             show_numpad: true,
         }

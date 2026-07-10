@@ -34,7 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let mut changed = false;
     let mut theme_changed = false;
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    theme::page_scroll(ui, |ui| {
         theme::centered_column(ui, 680.0, |ui| {
             ui.add_space(22.0);
             ui.label(
@@ -43,6 +43,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .color(p.brass),
             );
             ui.add_space(14.0);
+
+            section(ui, &p, "Drills", |ui| {
+                theme::control_row(ui, "Default drill duration:", |ui| {
+                    for (secs, label) in crate::core::config::DRILL_PRESETS {
+                        if ui
+                            .selectable_label(app.config.drill_secs == secs, label)
+                            .clicked()
+                        {
+                            app.config.drill_secs = secs;
+                            changed = true;
+                        }
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(
+                        "Word and Random drills run for this long; results appear when \
+time is up. The drill screen's start gate has the same picker.",
+                    )
+                    .color(p.ghost)
+                    .size(12.0),
+                );
+            });
 
             section(ui, &p, "Keyboard display", |ui| {
                 ui.horizontal(|ui| {
@@ -65,8 +87,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             .selectable_label(app.config.content_mode == cm, cm.label())
                             .clicked()
                         {
-                            app.config.content_mode = cm;
-                            changed = true;
+                            // Full transition (same as the top-bar tabs): saves the
+                            // config itself and never leaks the old mode's session.
+                            app.set_content_mode(cm);
                         }
                     }
                 });
@@ -84,6 +107,37 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
+            });
+
+            section(ui, &p, "Book generation", |ui| {
+                theme::control_row(ui, "Default language:", |ui| {
+                    if ui
+                        .text_edit_singleline(&mut app.config.default_language)
+                        .changed()
+                    {
+                        changed = true;
+                    }
+                });
+                theme::control_row(ui, "Model:", |ui| {
+                    for m in ["opus", "sonnet", "haiku", "fable"] {
+                        let label = if m == "opus" { "opus (default)" } else { m };
+                        if ui
+                            .selectable_label(app.config.book_model == m, label)
+                            .clicked()
+                        {
+                            app.config.book_model = m.to_string();
+                            changed = true;
+                        }
+                    }
+                });
+                ui.label(
+                    egui::RichText::new(
+                        "Book mode uses your Claude subscription via the claude CLI. It \
+never uses an API key.",
+                    )
+                    .color(p.ghost)
+                    .size(12.0),
+                );
             });
 
             section(ui, &p, "Appearance", |ui| {
@@ -131,37 +185,6 @@ sets how it starts.",
                 );
                 if ui
                     .checkbox(
-                        &mut app.config.reduced_motion,
-                        "Reduced motion (disable flashes/animations)",
-                    )
-                    .changed()
-                {
-                    changed = true;
-                }
-            });
-
-            section(ui, &p, "Drills", |ui| {
-                theme::control_row(ui, "Default drill duration:", |ui| {
-                    for (secs, label) in crate::core::config::DRILL_PRESETS {
-                        if ui
-                            .selectable_label(app.config.drill_secs == secs, label)
-                            .clicked()
-                        {
-                            app.config.drill_secs = secs;
-                            changed = true;
-                        }
-                    }
-                });
-                ui.label(
-                    egui::RichText::new(
-                        "Word and Random drills run for this long; results appear when \
-time is up. The drill screen's start gate has the same picker.",
-                    )
-                    .color(p.ghost)
-                    .size(12.0),
-                );
-                if ui
-                    .checkbox(
                         &mut app.config.show_numpad,
                         "Show the numpad on the keyboard",
                     )
@@ -169,37 +192,15 @@ time is up. The drill screen's start gate has the same picker.",
                 {
                     changed = true;
                 }
-            });
-
-            section(ui, &p, "Book generation", |ui| {
-                theme::control_row(ui, "Default language:", |ui| {
-                    if ui
-                        .text_edit_singleline(&mut app.config.default_language)
-                        .changed()
-                    {
-                        changed = true;
-                    }
-                });
-                theme::control_row(ui, "Model:", |ui| {
-                    for m in ["opus", "sonnet", "haiku", "fable"] {
-                        let label = if m == "opus" { "opus (default)" } else { m };
-                        if ui
-                            .selectable_label(app.config.book_model == m, label)
-                            .clicked()
-                        {
-                            app.config.book_model = m.to_string();
-                            changed = true;
-                        }
-                    }
-                });
-                ui.label(
-                    egui::RichText::new(
-                        "Book mode uses your Claude subscription via the claude CLI. It \
-never uses an API key.",
+                if ui
+                    .checkbox(
+                        &mut app.config.reduced_motion,
+                        "Reduced motion (disable flashes/animations)",
                     )
-                    .color(p.ghost)
-                    .size(12.0),
-                );
+                    .changed()
+                {
+                    changed = true;
+                }
             });
 
             if ui.button("Back to typing").clicked() {

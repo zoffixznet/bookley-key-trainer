@@ -43,10 +43,14 @@ resumes); paused time never counts toward the metrics, and the target text is ve
 it cannot be read ahead. Paste and Book sessions have a "Reset stats" control that
 zeroes the timer and metrics without losing your place in the text.
 
-Every keypress lands with a synthesized typewriter click, with a deeper thock for Space,
-Enter, and Backspace. The top-bar Sound switch controls the running session; Settings
-sets whether it starts on or off (on by default). The click is generated in code (no
-sample files), and on a machine with no audio device the app simply stays silent.
+Every keypress lands with a real typewriter sound: three distinct CC0 (public-domain)
+single-key recordings for ordinary keys and two deeper Hermes Precisa 305 space-bar and
+typebar thunks for Space, Enter, and Backspace, bundled under `assets/sounds/`, embedded
+in the binary, and played with slight random pitch/volume variation (see NOTICE for
+sources). The top-bar Sound switch controls the running session; Settings sets whether
+it starts on or off (on by default). If a bundled recording ever fails to decode the old
+synthesized click takes over automatically, and on a machine with no audio device the
+app simply stays silent.
 
 Live WPM (5-characters-per-word convention), raw WPM, accuracy, and consistency are
 shown while you type; the results screen adds a WPM-over-time graph (labeled time axis
@@ -79,6 +83,10 @@ app asks you to confirm, and the author invents everything, including the title.
   finish typing every chapter so far. You do not have to type a chapter in one sitting:
   progress is saved continuously, and returning to a chapter resumes one paragraph
   before where you left off as a refresher.
+- The app remembers the book you were working on: launching in Book mode reopens it and
+  drops you straight onto the typing stage of its next chapter, Space gate armed, no
+  clicking through the Books page. (With nothing left to type it opens the book's page
+  instead.)
 - After each chapter a single-line prompt asks how the story should continue. The author
   may ask one round of clarifying questions at most; answer in the app and it writes.
 - Ticking "Make this chapter the last chapter of the book" tells the author to land the
@@ -170,6 +178,11 @@ layout plus the embedded window icon) via the `gen-icons` helper binary.
   planned move to separate credits.)
 - **`make install-claude` is Debian/Ubuntu-oriented** (APT repository, sudo). On other
   distributions it falls back to Anthropic's native installer script.
+- **PDF export of non-Latin scripts depends on system fonts.** The embedded fonts cover
+  Latin/Cyrillic-range text; for CJK, Arabic, Devanagari and similar scripts the
+  exporter searches the system's fonts, so real glyphs appear only if a matching font
+  is installed (otherwise boxes may show). Hyphenation follows the book's language
+  field, falling back to English.
 - The CLI's output is an unstable interface. The Connect Claude flow scrapes it
   defensively and fails with a clear in-app message (never a hang) if the format
   changes; the fallback for power users is signing in with the CLI directly, which the

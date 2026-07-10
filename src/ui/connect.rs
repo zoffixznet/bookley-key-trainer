@@ -8,7 +8,7 @@ use crate::ui::app::{App, ConnectUiState, Screen};
 use crate::ui::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    theme::page_scroll(ui, |ui| {
         theme::centered_column(ui, 680.0, |ui| {
             connect_body(app, ui);
         });

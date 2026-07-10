@@ -9,6 +9,10 @@
 //! - every exotic Unicode space (nbsp, thin, wide, ideographic, ...) and tab -> " "
 //! - anything left with no sensible keyboard equivalent is dropped
 //! - only space and newline survive as whitespace; doubled spaces are collapsed
+//! - EXCEPT: when the ASCII fold would delete most of the letters (non-Latin scripts
+//!   such as Cyrillic or CJK, which have no ASCII decomposition), the original
+//!   characters are kept so the text stays typeable instead of collapsing to bare
+//!   punctuation
 //!
 //! Implementation: an explicit punctuation/space map first, then NFKD decomposition with
 //! combining marks and remaining non-ASCII dropped.
@@ -59,6 +63,20 @@ pub fn normalize_target(input: &str) -> String {
             out.push(c);
         }
         // Everything else (combining marks, emoji, symbols) is dropped.
+    }
+
+    // Guard: scripts with no ASCII decomposition (Cyrillic, Greek, CJK, Arabic, ...)
+    // would be deleted wholesale above, collapsing a whole chapter to bare punctuation
+    // that is "typed" in a few keystrokes. If the fold lost most of the letters, keep
+    // the original (pass-1-mapped) characters instead: keystroke comparison works for
+    // any char, and the keyboard highlight already degrades gracefully to none.
+    let letters = |s: &str| s.chars().filter(|c| c.is_alphabetic()).count();
+    let had = letters(&mapped);
+    if had > 0 && letters(&out) * 5 < had * 2 {
+        out = mapped
+            .chars()
+            .filter(|&c| c == '\n' || !c.is_control())
+            .collect();
     }
 
     // Pass 3: collapse runs of spaces (normalization can create doubles) and trim spaces
@@ -165,6 +183,20 @@ mod tests {
             normalize_target("end of line \n  next"),
             "end of line\nnext"
         );
+    }
+
+    /// Non-Latin scripts have no ASCII decomposition; deleting them would leave bare
+    /// punctuation as the "chapter". They must survive normalization instead.
+    #[test]
+    fn non_latin_scripts_are_kept_not_deleted() {
+        let ru = "Привет, мир! Это первая глава книги.";
+        assert_eq!(normalize_target(ru), ru);
+        let ja = "夜が明けると、町は静かだった。";
+        assert_eq!(normalize_target(ja), ja);
+        // Smart punctuation still normalizes in the kept text, and whitespace rules hold.
+        assert_eq!(normalize_target("«Привет» — мир…"), "\"Привет\" - мир...");
+        // Mostly-Latin text with a few stray symbols still folds to ASCII as before.
+        assert_eq!(normalize_target("café ☃ naïve"), "cafe naive");
     }
 
     #[test]
