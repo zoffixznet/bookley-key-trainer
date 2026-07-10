@@ -10,7 +10,10 @@ use bookley::core::config::Config;
 use bookley::ui::app::App;
 
 #[derive(Parser, Debug)]
-#[command(name = "bookley", about = "Bookley Key Trainer: type your way through a novel")]
+#[command(
+    name = "bookley",
+    about = "Bookley Key Trainer: type your way through a novel"
+)]
 struct Args {
     /// Developer mode: F9 auto-types the next expected key (hold to keep going),
     /// F10 completes the current page, F12 completes the whole chapter/text.
@@ -58,7 +61,12 @@ fn main() {
 
     // Try the default wgpu renderer first; fall back to glow (OpenGL) if the GPU stack
     // cannot initialize, and exit with a clear message if both fail.
-    match run_gui(config.clone(), dev, screenshot.clone(), eframe::Renderer::Wgpu) {
+    match run_gui(
+        config.clone(),
+        dev,
+        screenshot.clone(),
+        eframe::Renderer::Wgpu,
+    ) {
         Ok(()) => {}
         Err(e) => {
             tracing::warn!("wgpu renderer failed ({e}); retrying with glow (OpenGL)");
@@ -79,10 +87,8 @@ fn run_gui(
     screenshot: Option<std::path::PathBuf>,
     renderer: eframe::Renderer,
 ) -> Result<(), eframe::Error> {
-    let icon = eframe::icon_data::from_png_bytes(include_bytes!(
-        "../assets/icon/bookley-256.png"
-    ))
-    .ok();
+    let icon =
+        eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/bookley-256.png")).ok();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Bookley Key Trainer")

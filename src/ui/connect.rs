@@ -118,7 +118,8 @@ Paste it below.",
 
     // Keep polling while a flow is active.
     if app.auth.flow.is_some() {
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(200));
     }
 }
 
@@ -130,12 +131,11 @@ fn idle_view(app: &mut App, ui: &mut egui::Ui) {
                 ui.spinner();
                 ui.label("Checking your Claude connection...");
             });
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(200));
         }
         Some(AuthCheck::ConnectedToken) => {
-            ui.label(
-                egui::RichText::new("Connected. Book mode is ready.").color(p.verdigris),
-            );
+            ui.label(egui::RichText::new("Connected. Book mode is ready.").color(p.verdigris));
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 if ui.button("Go to Books").clicked() {

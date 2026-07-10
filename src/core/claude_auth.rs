@@ -295,8 +295,9 @@ fn scrape_pty(
                         let _ = tx.send(ConnectEvent::TokenStored);
                     }
                     Err(e) => {
-                        let _ = tx
-                            .send(ConnectEvent::Failed(format!("Could not save the token: {e}")));
+                        let _ = tx.send(ConnectEvent::Failed(format!(
+                            "Could not save the token: {e}"
+                        )));
                     }
                 }
             }
@@ -413,7 +414,10 @@ https://claude.com/cai/oauth/authorize?code=true&client_id=abc&state=xyz\n\nPast
 
     #[test]
     fn ignores_non_oauth_urls() {
-        assert_eq!(find_oauth_url("see https://example.com/docs for info"), None);
+        assert_eq!(
+            find_oauth_url("see https://example.com/docs for info"),
+            None
+        );
     }
 
     #[test]

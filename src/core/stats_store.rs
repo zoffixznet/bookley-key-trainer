@@ -28,8 +28,7 @@ impl Stats {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let s = serde_json::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let s = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(path, s)
     }
 

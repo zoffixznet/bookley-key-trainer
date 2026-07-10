@@ -81,8 +81,10 @@ in your system prompt and in the skill you just invoked).\n\n"
     p.push_str(&book_header(meta));
 
     if n == 1 {
-        p.push_str("This is the first chapter. Establish voice, POV, tense, setting, and a \
-protagonist with a concrete want and a concrete obstacle. Open in a scene.\n\n");
+        p.push_str(
+            "This is the first chapter. Establish voice, POV, tense, setting, and a \
+protagonist with a concrete want and a concrete obstacle. Open in a scene.\n\n",
+        );
     } else {
         p.push_str(&format!(
             "This continues an existing book. You are writing chapter {n}. Keep continuity \
@@ -111,21 +113,27 @@ with everything already established.\n\n"
 
     if continuation.trim().is_empty() {
         if allow_clarify {
-            p.push_str("The reader gave no direction for this chapter. You MAY ask one round \
+            p.push_str(
+                "The reader gave no direction for this chapter. You MAY ask one round \
 of clarifying questions if it will meaningfully improve the chapter; otherwise invent \
-decisively and write.\n\n");
+decisively and write.\n\n",
+            );
         } else {
-            p.push_str("The reader gave no direction and has confirmed they want you to \
+            p.push_str(
+                "The reader gave no direction and has confirmed they want you to \
 invent everything. You may NOT ask any clarifying question. Decide the direction yourself \
-and write the chapter now.\n\n");
+and write the chapter now.\n\n",
+            );
         }
     } else {
         p.push_str("## How the reader wants the story to continue\n");
         p.push_str(continuation.trim());
         p.push_str("\n\n");
         if allow_clarify {
-            p.push_str("You MAY ask one round of clarifying questions only if genuinely \
-necessary; otherwise write the chapter now.\n\n");
+            p.push_str(
+                "You MAY ask one round of clarifying questions only if genuinely \
+necessary; otherwise write the chapter now.\n\n",
+            );
         } else {
             p.push_str("Do not ask any clarifying question; write the chapter now.\n\n");
         }
@@ -179,15 +187,19 @@ dream, a rumor, an unreliable retelling) rather than creating a contradiction.\n
 
     p.push_str("## What the reader wants changed\n");
     if instruction.trim().is_empty() {
-        p.push_str("(No specific instruction: improve this chapter on its own terms while \
-keeping every downstream fact true.)\n\n");
+        p.push_str(
+            "(No specific instruction: improve this chapter on its own terms while \
+keeping every downstream fact true.)\n\n",
+        );
     } else {
         p.push_str(instruction.trim());
         p.push_str("\n\n");
     }
 
-    p.push_str("Do not ask clarifying questions; rewrite the chapter now. Update the bible \
-to reflect the rewrite. ");
+    p.push_str(
+        "Do not ask clarifying questions; rewrite the chapter now. Update the bible \
+to reflect the rewrite. ",
+    );
     p.push_str(&length_and_language(meta));
     p.push_str("\nReturn only the marked blocks per the output contract.");
     p

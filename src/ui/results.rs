@@ -16,7 +16,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Results").color(p.brass).size(24.0).strong());
+            ui.label(
+                egui::RichText::new("Results")
+                    .color(p.brass)
+                    .size(24.0)
+                    .strong(),
+            );
             if app.last_was_pb {
                 ui.label(
                     egui::RichText::new("  Personal best  ")
@@ -32,9 +37,27 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             big_stat(ui, &p, "wpm", &format!("{:.0}", result.wpm), p.verdigris);
             big_stat(ui, &p, "raw", &format!("{:.0}", result.raw_wpm), p.ghost);
-            big_stat(ui, &p, "accuracy", &format!("{:.0}%", result.accuracy * 100.0), p.paper);
-            big_stat(ui, &p, "consistency", &format!("{:.0}", result.consistency), p.paper);
-            big_stat(ui, &p, "net wpm", &format!("{:.0}", result.net_wpm), p.ghost);
+            big_stat(
+                ui,
+                &p,
+                "accuracy",
+                &format!("{:.0}%", result.accuracy * 100.0),
+                p.paper,
+            );
+            big_stat(
+                ui,
+                &p,
+                "consistency",
+                &format!("{:.0}", result.consistency),
+                p.paper,
+            );
+            big_stat(
+                ui,
+                &p,
+                "net wpm",
+                &format!("{:.0}", result.net_wpm),
+                p.ghost,
+            );
         });
         if let Some(best) = app.stats.best_for(&result.mode) {
             ui.label(
@@ -44,7 +67,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
 
         ui.add_space(16.0);
-        ui.label(egui::RichText::new("WPM over time").color(p.ghost).size(14.0));
+        ui.label(
+            egui::RichText::new("WPM over time")
+                .color(p.ghost)
+                .size(14.0),
+        );
         wpm_graph(ui, &p, &result);
 
         ui.add_space(16.0);
@@ -89,13 +116,23 @@ fn big_stat(
     color: Color32,
 ) {
     ui.vertical(|ui| {
-        ui.label(egui::RichText::new(value).color(color).size(40.0).monospace().strong());
+        ui.label(
+            egui::RichText::new(value)
+                .color(color)
+                .size(40.0)
+                .monospace()
+                .strong(),
+        );
         ui.label(egui::RichText::new(label).color(p.ghost).size(12.0));
     });
     ui.add_space(24.0);
 }
 
-fn wpm_graph(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, r: &crate::core::metrics::SessionResult) {
+fn wpm_graph(
+    ui: &mut egui::Ui,
+    p: &crate::ui::theme::Palette,
+    r: &crate::core::metrics::SessionResult,
+) {
     let w = ui.available_width().min(860.0);
     let h = 160.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::new(w, h), Sense::hover());
@@ -142,7 +179,11 @@ fn wpm_graph(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, r: &crate::core::
     }
 }
 
-fn heatmap(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, r: &crate::core::metrics::SessionResult) {
+fn heatmap(
+    ui: &mut egui::Ui,
+    p: &crate::ui::theme::Palette,
+    r: &crate::core::metrics::SessionResult,
+) {
     // Show up to the 12 worst keys (by errors then latency).
     let mut keys: Vec<&(String, u32, u32, f64)> = r.per_key.iter().collect();
     keys.sort_by(|a, b| {

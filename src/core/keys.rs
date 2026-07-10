@@ -150,9 +150,7 @@ pub fn layout() -> Vec<Vec<KeyCap>> {
             KeyCap::new(Key::Comma, ",", Some("<"), 1.0, RightMiddle), // placeholder replaced below
         ],
         // Space row
-        vec![
-            KeyCap::new(Key::Space, "Space", None, 6.0, LeftThumb),
-        ],
+        vec![KeyCap::new(Key::Space, "Space", None, 6.0, LeftThumb)],
         // Navigation cluster / arrows (drawn as a compact block)
         vec![
             KeyCap::new(Key::Insert, "Ins", None, 1.0, RightPinky),

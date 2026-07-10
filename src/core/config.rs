@@ -167,8 +167,7 @@ impl Config {
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        let s = toml::to_string_pretty(self)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let s = toml::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(path, s)
     }
 }
@@ -188,10 +187,12 @@ mod tests {
 
     #[test]
     fn roundtrip_toml() {
-        let mut c = Config::default();
-        c.keyboard_mode = KeyboardMode::Feedback;
-        c.content_mode = ContentMode::Book;
-        c.default_language = "Deutsch".into();
+        let c = Config {
+            keyboard_mode: KeyboardMode::Feedback,
+            content_mode: ContentMode::Book,
+            default_language: "Deutsch".into(),
+            ..Config::default()
+        };
         let dir = std::env::temp_dir().join(format!("bookley-cfg-{}", std::process::id()));
         let path = dir.join("config.toml");
         c.save_to(&path).unwrap();

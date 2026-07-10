@@ -58,9 +58,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     // Dock the keyboard at the bottom.
     let next_key = app.session.as_ref().and_then(|s| s.next_physical_key());
-    let now = app
-        .session_started_secs()
-        .unwrap_or(0.0);
+    let now = app.session_started_secs().unwrap_or(0.0);
     egui::Panel::bottom("keyboard_dock")
         .show_separator_line(false)
         .frame(egui::Frame::NONE.fill(p.ink_950))
@@ -101,13 +99,23 @@ fn hud(app: &App, ui: &mut egui::Ui) {
         stat(ui, &p, "progress", &format!("{frac:.0}%"), p.brass);
         if let Some(s) = &app.session {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(&s.target.title).color(p.brass).italics());
+                ui.label(
+                    egui::RichText::new(&s.target.title)
+                        .color(p.brass)
+                        .italics(),
+                );
             });
         }
     });
 }
 
-fn stat(ui: &mut egui::Ui, p: &crate::ui::theme::Palette, label: &str, value: &str, color: Color32) {
+fn stat(
+    ui: &mut egui::Ui,
+    p: &crate::ui::theme::Palette,
+    label: &str,
+    value: &str,
+    color: Color32,
+) {
     ui.vertical(|ui| {
         ui.label(
             egui::RichText::new(value)
@@ -156,12 +164,11 @@ fn manuscript(app: &App, ui: &mut egui::Ui) {
 
     // Show a window of lines around the caret so long texts scroll.
     let caret = session.cursor.min(items.len().saturating_sub(1));
-    let caret_line = lines
-        .iter()
-        .position(|l| l.contains(&caret))
-        .unwrap_or(0);
+    let caret_line = lines.iter().position(|l| l.contains(&caret)).unwrap_or(0);
     let max_lines = 6usize;
-    let start_line = caret_line.saturating_sub(2).min(lines.len().saturating_sub(max_lines).max(0));
+    let start_line = caret_line
+        .saturating_sub(2)
+        .min(lines.len().saturating_sub(max_lines));
     let end_line = (start_line + max_lines).min(lines.len());
 
     let strip_h = line_h * max_lines as f32 + 24.0;
@@ -242,7 +249,11 @@ fn draw_caret(
                 egui::pos2(x, y - font_size * 0.6),
                 Vec2::new(char_w, font_size * 1.15),
             );
-            painter.rect_filled(r, egui::CornerRadius::same(2), p.verdigris.linear_multiply(0.55));
+            painter.rect_filled(
+                r,
+                egui::CornerRadius::same(2),
+                p.verdigris.linear_multiply(0.55),
+            );
         }
         CaretStyle::Bar => {
             painter.line_segment(

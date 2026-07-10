@@ -151,9 +151,8 @@ impl App {
             .map(|p| Stats::load_from(&p))
             .unwrap_or_default();
 
-        let store = BookStore::new(
-            paths::books_dir().unwrap_or_else(|| std::path::PathBuf::from("books")),
-        );
+        let store =
+            BookStore::new(paths::books_dir().unwrap_or_else(|| std::path::PathBuf::from("books")));
 
         // Stage the bundled plugin so --plugin-dir works from an installed binary.
         let plugin_root = paths::plugin_dir().unwrap_or_else(|| std::path::PathBuf::from("plugin"));
@@ -210,9 +209,8 @@ impl App {
                 self.auth.code_input.clear();
             }
             Err(e) => {
-                self.auth.state = ConnectUiState::Failed(format!(
-                    "Could not start the sign-in flow: {e}"
-                ));
+                self.auth.state =
+                    ConnectUiState::Failed(format!("Could not start the sign-in flow: {e}"));
             }
         }
     }
@@ -315,7 +313,8 @@ impl App {
     /// Weak-key weighting: keys with lower accuracy or higher latency get up-weighted.
     fn adaptive_weights(&self, pool: &[Key]) -> Option<Vec<f32>> {
         // Aggregate per-key error rate across recent history.
-        let mut acc: std::collections::HashMap<String, (u32, u32)> = std::collections::HashMap::new();
+        let mut acc: std::collections::HashMap<String, (u32, u32)> =
+            std::collections::HashMap::new();
         for r in self.stats.history.iter().rev().take(20) {
             for (label, presses, errors, _lat) in &r.per_key {
                 let e = acc.entry(label.clone()).or_insert((0, 0));
@@ -579,7 +578,14 @@ impl App {
                         prose,
                         bible,
                     } => {
-                        self.write_generated_chapter(&mut book, gen.n, &title, &prose, &bible, done.session_id);
+                        self.write_generated_chapter(
+                            &mut book,
+                            gen.n,
+                            &title,
+                            &prose,
+                            &bible,
+                            done.session_id,
+                        );
                     }
                     ParsedReply::Fallback(prose) => {
                         self.write_generated_chapter(
@@ -780,11 +786,7 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
                     .size(20.0)
                     .strong(),
             );
-            ui.label(
-                egui::RichText::new("Key Trainer")
-                    .color(p.ghost)
-                    .size(13.0),
-            );
+            ui.label(egui::RichText::new("Key Trainer").color(p.ghost).size(13.0));
             if app.dev_mode {
                 ui.label(
                     egui::RichText::new(" DEV ")

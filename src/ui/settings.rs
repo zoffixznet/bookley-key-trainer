@@ -1,8 +1,6 @@
 //! Settings view: persisted preferences across the two axes plus visual/behavior options.
 
-use crate::core::config::{
-    CaretStyle, ContentMode, ErrorMode, KeyboardMode, Theme,
-};
+use crate::core::config::{CaretStyle, ContentMode, ErrorMode, KeyboardMode, Theme};
 use crate::ui::app::App;
 use crate::ui::theme;
 
@@ -13,7 +11,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(12.0);
-        ui.label(egui::RichText::new("Settings").color(p.brass).size(24.0).strong());
+        ui.label(
+            egui::RichText::new("Settings")
+                .color(p.brass)
+                .size(24.0)
+                .strong(),
+        );
         ui.add_space(12.0);
 
         ui.group(|ui| {
@@ -66,7 +69,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label("Theme:");
                 for t in [Theme::Dark, Theme::Light] {
-                    if ui.selectable_label(app.config.theme == t, t.label()).clicked() {
+                    if ui
+                        .selectable_label(app.config.theme == t, t.label())
+                        .clicked()
+                    {
                         app.config.theme = t;
                         changed = true;
                         theme_changed = true;
@@ -76,19 +82,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label("Caret:");
                 for c in [CaretStyle::Block, CaretStyle::Bar, CaretStyle::Underline] {
-                    if ui.selectable_label(app.config.caret == c, c.label()).clicked() {
+                    if ui
+                        .selectable_label(app.config.caret == c, c.label())
+                        .clicked()
+                    {
                         app.config.caret = c;
                         changed = true;
                     }
                 }
             });
             if ui
-                .checkbox(&mut app.config.reduced_motion, "Reduced motion (disable flashes/animations)")
+                .checkbox(
+                    &mut app.config.reduced_motion,
+                    "Reduced motion (disable flashes/animations)",
+                )
                 .changed()
             {
                 changed = true;
             }
-            if ui.checkbox(&mut app.config.sound, "Sound on keystroke").changed() {
+            if ui
+                .checkbox(&mut app.config.sound, "Sound on keystroke")
+                .changed()
+            {
                 changed = true;
             }
         });

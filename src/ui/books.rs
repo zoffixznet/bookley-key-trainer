@@ -18,7 +18,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Your books").color(p.brass).size(24.0).strong());
+            ui.label(
+                egui::RichText::new("Your books")
+                    .color(p.brass)
+                    .size(24.0)
+                    .strong(),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("New book").clicked() {
                     app.book_ui.show_create = true;
@@ -82,7 +87,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let total = book.meta.chapters.len();
                 let group = ui.group(|ui| {
                     ui.set_width(220.0);
-                    ui.label(egui::RichText::new(&title).color(p.brass).size(16.0).strong());
+                    ui.label(
+                        egui::RichText::new(&title)
+                            .color(p.brass)
+                            .size(16.0)
+                            .strong(),
+                    );
                     ui.label(
                         egui::RichText::new(if book.meta.language.is_empty() {
                             "".to_string()
@@ -194,7 +204,12 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
     };
     let title = crate::core::book::store::display_title(&book.meta);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(&title).color(p.brass).size(20.0).strong());
+        ui.label(
+            egui::RichText::new(&title)
+                .color(p.brass)
+                .size(20.0)
+                .strong(),
+        );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Close").clicked() {
                 app.book_ui.open_slug = None;
@@ -244,10 +259,7 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
     // Rewrite dialog.
     if let Some(rn) = app.book_ui.rewrite_n {
         ui.group(|ui| {
-            ui.label(
-                egui::RichText::new(format!("Rewrite chapter {rn}"))
-                    .color(p.brass),
-            );
+            ui.label(egui::RichText::new(format!("Rewrite chapter {rn}")).color(p.brass));
             ui.label(
                 egui::RichText::new(
                     "Later chapters stay as they are; this rewrite must still fit the book. \
@@ -259,7 +271,8 @@ Rewriting resets this chapter's typing progress.",
             ui.text_edit_singleline(&mut app.book_ui.rewrite_instruction);
             ui.horizontal(|ui| {
                 if ui.button("Rewrite now").clicked() {
-                    let prompt = prompt::rewrite_prompt(&book, rn, &app.book_ui.rewrite_instruction);
+                    let prompt =
+                        prompt::rewrite_prompt(&book, rn, &app.book_ui.rewrite_instruction);
                     app.book_ui.rewrite_n = None;
                     app.start_generation(rn, true, prompt);
                 }
@@ -356,10 +369,8 @@ this chapter?",
         });
     } else {
         ui.label(
-            egui::RichText::new(
-                "Finish typing every generated chapter to unlock the next one.",
-            )
-            .color(p.ghost),
+            egui::RichText::new("Finish typing every generated chapter to unlock the next one.")
+                .color(p.ghost),
         );
     }
 }

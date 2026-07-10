@@ -134,21 +134,19 @@ impl Session {
 
     /// Whether the current word (word_start..cursor) contains any wrong positions.
     fn word_has_errors(&self) -> bool {
-        self.status[self.word_start..self.cursor]
-            .iter()
-            .any(|s| *s == CharStatus::Wrong)
+        self.status[self.word_start..self.cursor].contains(&CharStatus::Wrong)
     }
 
     fn apply(&mut self, correct: bool, phys: Option<Key>, now_secs: f64) -> Progress {
         // Stop-on-word: at a word boundary with unfixed errors in the word, block even a
         // correct boundary press; the user must backspace and fix the word first.
-        let word_block = self.error_mode == ErrorMode::Word
-            && self.at_word_boundary()
-            && self.word_has_errors();
+        let word_block =
+            self.error_mode == ErrorMode::Word && self.at_word_boundary() && self.word_has_errors();
         let counted_correct = correct && !word_block;
 
         let latency = self.latency_ms(now_secs);
-        self.metrics.record_keystroke(phys, counted_correct, latency);
+        self.metrics
+            .record_keystroke(phys, counted_correct, latency);
         self.metrics.tick(now_secs);
 
         if word_block {
@@ -314,10 +312,16 @@ mod tests {
 
     #[test]
     fn dev_complete_all_finishes_everything() {
-        let mut s = Session::new(Target::from_text("a long chapter of text", "t"), ErrorMode::Off);
+        let mut s = Session::new(
+            Target::from_text("a long chapter of text", "t"),
+            ErrorMode::Off,
+        );
         s.dev_complete_all(1.0);
         assert!(s.is_complete());
-        assert_eq!(s.metrics.correct_chars as usize, "a long chapter of text".len());
+        assert_eq!(
+            s.metrics.correct_chars as usize,
+            "a long chapter of text".len()
+        );
     }
 
     #[test]

@@ -73,8 +73,7 @@ impl Book {
     pub fn save(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)?;
         std::fs::create_dir_all(self.chapters_dir())?;
-        let s = toml::to_string_pretty(&self.meta)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+        let s = toml::to_string_pretty(&self.meta).map_err(std::io::Error::other)?;
         std::fs::write(self.meta_path(), s)
     }
 
@@ -295,7 +294,7 @@ impl BookStore {
                 Err(e) => tracing::warn!("skipping corrupt book {slug}: {e}"),
             }
         }
-        out.sort_by(|a, b| a.meta.title.to_lowercase().cmp(&b.meta.title.to_lowercase()));
+        out.sort_by_key(|a| a.meta.title.to_lowercase());
         out
     }
 
@@ -334,7 +333,12 @@ mod tests {
         let root = tmp_root();
         let store = BookStore::new(root.clone());
         let mut book = store
-            .create("The Long Night", "English", "A city that never sleeps.", false)
+            .create(
+                "The Long Night",
+                "English",
+                "A city that never sleeps.",
+                false,
+            )
             .unwrap();
         book.write_chapter(1, "Arrival", "It began at dusk.", "CAST: Mara")
             .unwrap();
@@ -352,7 +356,12 @@ mod tests {
         // Rewrite chapter 1 resets typed progress.
         let mut reloaded = reloaded;
         reloaded
-            .write_chapter(1, "Arrival (v2)", "It began at midnight.", "CAST: Mara, Doss")
+            .write_chapter(
+                1,
+                "Arrival (v2)",
+                "It began at midnight.",
+                "CAST: Mara, Doss",
+            )
             .unwrap();
         assert!(!reloaded.meta.chapters[0].done);
         assert_eq!(reloaded.meta.chapters[0].typed_chars, 0);

@@ -65,18 +65,13 @@ pub fn draw(
         .map(|row| row.iter().map(|c| c.width).sum::<f32>())
         .fold(0.0, f32::max);
     let gap = 4.0;
-    let n_max_keys = layout
-        .iter()
-        .map(|r| r.len())
-        .max()
-        .unwrap_or(1) as f32;
+    let n_max_keys = layout.iter().map(|r| r.len()).max().unwrap_or(1) as f32;
     let unit = ((avail_w - gap * (n_max_keys + 1.0)) / max_units).clamp(20.0, 46.0);
     let key_h = (unit * 1.05).clamp(22.0, 44.0);
     let row_h = key_h + gap;
     let total_h = row_h * layout.len() as f32 + gap;
 
-    let (rect, _resp) =
-        ui.allocate_exact_size(Vec2::new(avail_w, total_h), Sense::hover());
+    let (rect, _resp) = ui.allocate_exact_size(Vec2::new(avail_w, total_h), Sense::hover());
     let painter = ui.painter_at(rect);
 
     let mut y = rect.top() + gap;
@@ -87,7 +82,17 @@ pub fn draw(
         for cap in row {
             let w = cap.width * unit;
             let kr = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, key_h));
-            draw_cap(&painter, palette, cap, kr, mode, next_key, flash, reduced_motion, now);
+            draw_cap(
+                &painter,
+                palette,
+                cap,
+                kr,
+                mode,
+                next_key,
+                flash,
+                reduced_motion,
+                now,
+            );
             x += w + gap;
         }
         y += row_h;
@@ -149,7 +154,11 @@ fn draw_cap(
 
     // Label.
     let fs = (rect.height() * 0.42).clamp(9.0, 16.0);
-    let label_color = if is_next { palette.verdigris } else { palette.paper };
+    let label_color = if is_next {
+        palette.verdigris
+    } else {
+        palette.paper
+    };
     painter.text(
         rect.center(),
         Align2::CENTER_CENTER,
@@ -174,9 +183,5 @@ fn draw_cap(
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
-    Color32::from_rgb(
-        l(a.r(), b.r()),
-        l(a.g(), b.g()),
-        l(a.b(), b.b()),
-    )
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }

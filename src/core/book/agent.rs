@@ -66,28 +66,29 @@ then retry."
                     .into()
             }
             GenError::Billing => {
-                "Claude reported a billing problem. Check your subscription, then retry."
-                    .into()
+                "Claude reported a billing problem. Check your subscription, then retry.".into()
             }
             GenError::RateLimited => {
                 "Claude is rate-limited right now. Wait a bit and retry; your chapters are \
-saved.".into()
+saved."
+                    .into()
             }
             GenError::Overloaded => {
                 "Claude is overloaded. Retry in a moment; your chapters are saved.".into()
             }
             GenError::InvalidRequest(s) => format!("Claude rejected the request: {s}"),
             GenError::ServerError => {
-                "Claude had a server error. Retry in a moment; your chapters are saved."
-                    .into()
+                "Claude had a server error. Retry in a moment; your chapters are saved.".into()
             }
             GenError::MaxTurns => {
                 "The chapter didn't finish (turn limit). Retry to regenerate it; nothing \
-was lost.".into()
+was lost."
+                    .into()
             }
             GenError::MaxOutputTokens => {
                 "The chapter hit the length cap and may be truncated. Retry, or accept the \
-partial chapter.".into()
+partial chapter."
+                    .into()
             }
             GenError::Cancelled => "Generation cancelled. Nothing was lost.".into(),
             GenError::Other(s) => format!("Book generation failed: {s}"),
@@ -229,10 +230,7 @@ pub fn parse_stream_lines<F: FnMut(&str)>(
                 }
                 match sub {
                     "success" if !is_error => {
-                        result_text = v
-                            .get("result")
-                            .and_then(|r| r.as_str())
-                            .map(String::from);
+                        result_text = v.get("result").and_then(|r| r.as_str()).map(String::from);
                     }
                     "error_max_turns" => return Err(GenError::MaxTurns),
                     "error_during_execution" => {
@@ -252,15 +250,13 @@ pub fn parse_stream_lines<F: FnMut(&str)>(
     }
 
     // Prefer the final `result` text; fall back to accumulated assistant text.
-    let text = result_text
-        .filter(|t| !t.trim().is_empty())
-        .or_else(|| {
-            if assistant_text.trim().is_empty() {
-                None
-            } else {
-                Some(assistant_text.clone())
-            }
-        });
+    let text = result_text.filter(|t| !t.trim().is_empty()).or_else(|| {
+        if assistant_text.trim().is_empty() {
+            None
+        } else {
+            Some(assistant_text.clone())
+        }
+    });
 
     match text {
         Some(t) => Ok(GenSuccess {
@@ -276,8 +272,8 @@ pub fn parse_stream_lines<F: FnMut(&str)>(
 
 /// Parse a single `--output-format json` object into a `GenResult`.
 pub fn parse_json_result(raw: &str) -> GenResult {
-    let v: Value = serde_json::from_str(raw.trim())
-        .map_err(|e| GenError::Other(format!("bad json: {e}")))?;
+    let v: Value =
+        serde_json::from_str(raw.trim()).map_err(|e| GenError::Other(format!("bad json: {e}")))?;
     let sub = v.get("subtype").and_then(|s| s.as_str()).unwrap_or("");
     let is_error = v.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false);
     let session_id = v
@@ -330,8 +326,12 @@ pub struct GenRequest {
 pub trait CommandRunner: Send + Sync {
     /// Run the request, invoking `on_delta` for streamed text and returning the result.
     /// `cancel` may be flipped from another thread to abort the run (kills the child).
-    fn run(&self, req: &GenRequest, cancel: &AtomicBool, on_delta: &mut dyn FnMut(&str))
-        -> GenResult;
+    fn run(
+        &self,
+        req: &GenRequest,
+        cancel: &AtomicBool,
+        on_delta: &mut dyn FnMut(&str),
+    ) -> GenResult;
     /// Check login status. Returns Ok(true) if logged in, Ok(false) if logged out.
     fn auth_status(&self) -> Result<bool, GenError>;
 }
@@ -395,7 +395,10 @@ impl CommandRunner for ClaudeRunner {
                 return Ok(b);
             }
         }
-        Ok(text.to_lowercase().contains("logged in") && !text.to_lowercase().contains("not logged"))
+        Ok(
+            text.to_lowercase().contains("logged in")
+                && !text.to_lowercase().contains("not logged"),
+        )
     }
 
     fn run(
