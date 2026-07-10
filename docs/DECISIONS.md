@@ -27,6 +27,10 @@ each; newest at the bottom of each section.
 - Chapter parsing prefers the `result` field of `--output-format json`. Stream-json is
   used only for the live "writing..." view (text_delta chunks). This keeps parsing simple
   and robust; the live view is best-effort.
+- Continuity context per chapter = the persisted bible + the previous chapter's tail +
+  `--resume <session>` from the book's own directory. The spec's "story so far in a file,
+  referenced by path" variant is pointless here because every run passes `--tools ""`
+  (the agent cannot read files); prompt sizes stay a few KB, far under the stdin cap.
 - Full craft on every call (per updated spec, line 79/80/110/280): the COMPLETE novelist
   craft lives in the always-on system prompt (`--append-system-prompt`) AND in the bundled
   `SKILL.md`, and we invoke the skill deterministically with `/novelist:write-chapter ...`
