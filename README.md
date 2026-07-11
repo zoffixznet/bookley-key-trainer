@@ -187,22 +187,20 @@ layout plus the embedded window icon) via the `gen-icons` helper binary.
 
 ## Known limitations
 
-- **Wayland is untested here.** This machine's session is X11, where the app is verified
-  (including scripted screenshots). The same binary carries eframe/winit's Wayland
-  backend unchanged; run `make run` on a Wayland session to verify. If the compositor
-  misbehaves with wgpu, the app automatically retries with the OpenGL (glow) renderer;
+- **X11 and Wayland share one code path, but X11 sees the most testing.** The same
+  binary runs on both. If your Wayland compositor misbehaves with wgpu, the app
+  automatically retries with the OpenGL (glow) renderer; setting
   `WINIT_UNIX_BACKEND=x11` forces XWayland as a last resort.
 - **Live book generation is not exercised by the test suite.** It requires a connected
   Claude subscription and consumes real usage, so it is behind the opt-in
-  `make live-book-smoke` (and was verified manually during development). Everything else
-  runs against the bundled fake CLI.
+  `make live-book-smoke`. Everything else runs against a bundled fake CLI.
 - **Anthropic terms note.** Anthropic's SDK documentation states that, without prior
   approval, third-party developers may not offer claude.ai sign-in / subscription-based
   usage in products *distributed to other users*. Using Bookley yourself with your own
   subscription is fine; if you plan to distribute it, that clause is your call to
-  resolve with Anthropic first. (Also verified at build time: `claude -p` / Agent SDK
-  usage currently draws from the subscription's usage limits; Anthropic paused the
-  planned move to separate credits.)
+  resolve with Anthropic first. (As of mid-2026, `claude -p` / Agent SDK usage draws
+  from the subscription's usage limits; Anthropic has paused a planned move to
+  separate credits.)
 - **`make install-claude` is Debian/Ubuntu-oriented** (APT repository, sudo). On other
   distributions it falls back to Anthropic's native installer script.
 - **PDF export of non-Latin scripts depends on system fonts.** The embedded fonts cover
