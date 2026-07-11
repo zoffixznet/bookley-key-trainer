@@ -4,6 +4,7 @@ Name=Bookley Key Trainer
 GenericName=Typing Trainer
 Comment=Practice typing while an AI writes a novel, one chapter at a time
 Exec=bookley-key-trainer
+TryExec=bookley-key-trainer
 Icon=bookley-key-trainer
 Terminal=false
 Categories=Education;Utility;

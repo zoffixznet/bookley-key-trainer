@@ -27,7 +27,11 @@ rand = "=0.10.2"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 tracing = "=0.1.44"
 tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
-image = { version = "=0.25.9", default-features = false, features = ["png"] }
+image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
+# Clipboard reads for the paste box's right-click menu (X11 built in; Wayland opt-in).
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+# Native file picker for uploading a cover; xdg-portal backend (KDE/GNOME, no GTK).
+rfd = "=0.17.2"
 resvg = "=0.47.0"
 
 # PDF export: Typst engine embedded in-process with bundled fonts, plus the PDF backend.

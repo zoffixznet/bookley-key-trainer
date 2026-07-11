@@ -304,3 +304,21 @@ each; newest at the bottom of each section.
   make run / make install intentionally do NOT depend on deps (documented in the
   Quick start, along with the fact that a fresh Ubuntu lacks make itself and needs
   sudo apt install make git first).
+
+## Round 9 (Wayland/KDE feedback)
+
+- The paste box gained a right-click menu (Paste / Paste, replacing / Clear) backed by
+  arboard, since egui only surfaces clipboard content on Ctrl+V events; the box keeps a
+  fixed height with an inner always-visible scrollbar and the whole screen page-scrolls,
+  so a huge paste can never push the Start button out of reach.
+- Action buttons are laid out with add_sized via a shared theme::action_button helper:
+  min_size alone left labels left-aligned with lopsided padding on some backends
+  (reported on Wayland).
+- "Upload cover" uses rfd's xdg-portal backend (KDE/GNOME native dialogs, no GTK) on a
+  background thread; the image (PNG/JPEG/WebP, <=50 MB) is bounded to the cover canvas,
+  re-encoded as PNG, and stored exactly like a generated cover. A canceled dialog just
+  stands down.
+- The installed desktop entry's Exec/TryExec are rewritten to the absolute binary path:
+  KDE and friends resolve Exec against the session PATH, which often lacks ~/.local/bin
+  even when interactive shells have it, which made launcher/taskbar launches fail with
+  "could not find the program".

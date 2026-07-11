@@ -279,6 +279,32 @@ pub struct CoverOutcome {
 /// generate -> extract -> validate -> rasterize, retry once feeding the error back,
 /// then fall back to the local typographic cover. Spawn/auth/rate-limit errors from the
 /// CLI propagate unchanged (same classification and handling as chapter generation).
+/// Turn a user-chosen image file into the book's cover PNG: decode (PNG/JPEG/WebP),
+/// bound the dimensions to the cover canvas (never upscales), and re-encode as PNG for
+/// the same on-disk format and PDF pipeline as generated covers.
+pub fn process_uploaded_cover(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    const MAX_BYTES: u64 = 50 * 1024 * 1024;
+    let meta = std::fs::metadata(path).map_err(|e| format!("could not read the file: {e}"))?;
+    if meta.len() > MAX_BYTES {
+        return Err("the file is larger than 50 MB".into());
+    }
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read the file: {e}"))?;
+    let img = image::load_from_memory(&bytes)
+        .map_err(|e| format!("not a usable image (PNG, JPEG, or WebP): {e}"))?;
+    // Bound to the cover canvas, preserving aspect. thumbnail() fits the bounds in
+    // BOTH directions (it upscales small images), so only apply it when the image is
+    // actually larger than the canvas.
+    let img = if img.width() > 1600 || img.height() > 2560 {
+        img.thumbnail(1600, 2560)
+    } else {
+        img
+    };
+    let mut png = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| format!("could not encode the cover: {e}"))?;
+    Ok(png)
+}
+
 pub fn generate_cover_blocking(
     runner: &dyn CommandRunner,
     book: &Book,
@@ -426,5 +452,41 @@ fill='#fff'>The Test</text></svg>";
         assert!(retry.contains("previous attempt failed"));
         assert!(retry.contains("boom"));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn uploaded_cover_roundtrips_and_bounds() {
+        let dir = std::env::temp_dir().join(format!("bookley-cover-up-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // A small JPEG becomes a PNG cover without upscaling.
+        let jpg_path = dir.join("c.jpg");
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            40,
+            64,
+            image::Rgb([180, 120, 40]),
+        ))
+        .save(&jpg_path)
+        .unwrap();
+        let png = process_uploaded_cover(&jpg_path).expect("jpeg accepted");
+        assert!(png.starts_with(b"\x89PNG"), "re-encoded as png");
+        let out = image::load_from_memory(&png).unwrap();
+        assert_eq!((out.width(), out.height()), (40, 64), "no upscaling");
+        // An oversized image is bounded to the cover canvas.
+        let big_path = dir.join("big.png");
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            3200,
+            3200,
+            image::Rgb([10, 10, 10]),
+        ))
+        .save(&big_path)
+        .unwrap();
+        let png = process_uploaded_cover(&big_path).expect("big image accepted");
+        let out = image::load_from_memory(&png).unwrap();
+        assert!(out.width() <= 1600 && out.height() <= 2560, "bounded");
+        // Garbage is rejected with a message, not a panic.
+        let junk = dir.join("junk.webp");
+        std::fs::write(&junk, b"not an image").unwrap();
+        assert!(process_uploaded_cover(&junk).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

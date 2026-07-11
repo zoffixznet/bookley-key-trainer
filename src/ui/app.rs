@@ -52,10 +52,15 @@ pub struct CoverGen {
     pub slug: String,
 }
 
-/// Outcome of a background cover run.
+/// Outcome of a background cover run (generated or uploaded).
 pub enum CoverEvent {
-    Done { png: Vec<u8>, used_fallback: bool },
+    Done {
+        png: Vec<u8>,
+        used_fallback: bool,
+    },
     Failed(GenError),
+    /// An uploaded file could not be used as an image.
+    BadImage(String),
 }
 
 /// UI state of the Connect Claude flow.
@@ -172,6 +177,9 @@ pub struct App {
     pub auth: AuthUi,
     /// A cover-design run in flight, if any.
     pub cover_gen: Option<CoverGen>,
+    /// A cover upload in flight: the native file dialog plus image processing run on a
+    /// background thread; a dropped channel means the user canceled the dialog.
+    pub cover_upload: Option<(String, Receiver<CoverEvent>)>,
     /// Cached cover texture keyed by slug + file mtime (reloaded when either changes).
     pub cover_tex: Option<(String, egui::TextureHandle)>,
 
@@ -250,6 +258,7 @@ impl App {
             gen: None,
             auth: AuthUi::default(),
             cover_gen: None,
+            cover_upload: None,
             cover_tex: None,
             session_book: None,
             book_resume_offset: 0,
@@ -1111,6 +1120,94 @@ impl App {
         self.book_ui.status = Some("Designing a cover...".into());
     }
 
+    /// Pick an image file and use it as the book's cover. The native dialog (and the
+    /// image decode) run on a background thread; the same save path as generated
+    /// covers applies when it lands.
+    pub fn start_cover_upload(&mut self) {
+        if self.cover_gen.is_some() || self.cover_upload.is_some() {
+            return;
+        }
+        let Some(slug) = self.book_ui.open_slug.clone() else {
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Some(path) = rfd::FileDialog::new()
+                .set_title("Choose a cover image")
+                .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                .pick_file()
+            else {
+                return; // canceled: dropping tx tells the poller to stand down
+            };
+            let ev = match crate::core::book::cover::process_uploaded_cover(&path) {
+                Ok(png) => CoverEvent::Done {
+                    png,
+                    used_fallback: false,
+                },
+                Err(e) => CoverEvent::BadImage(e),
+            };
+            let _ = tx.send(ev);
+        });
+        self.cover_upload = Some((slug, rx));
+        self.book_ui.status = Some("Choose a cover image...".into());
+    }
+
+    /// Poll an in-flight cover upload; a disconnected channel means the dialog was
+    /// canceled.
+    fn poll_cover_upload(&mut self, ctx: &egui::Context) {
+        let Some((slug, rx)) = &self.cover_upload else {
+            return;
+        };
+        let slug = slug.clone();
+        match rx.try_recv() {
+            Ok(CoverEvent::Done { png, .. }) => {
+                self.cover_upload = None;
+                self.save_cover_png(
+                    &slug,
+                    &png,
+                    "Cover uploaded: it is page one of the \
+PDF export. Upload or generate again to replace it.",
+                );
+            }
+            Ok(CoverEvent::BadImage(e)) => {
+                self.cover_upload = None;
+                self.book_ui.status = Some(format!("Could not use that image: {e}"));
+            }
+            Ok(CoverEvent::Failed(e)) => {
+                self.cover_upload = None;
+                self.book_ui.status = Some(e.user_message());
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.cover_upload = None; // dialog canceled
+                self.book_ui.status = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            }
+        }
+    }
+
+    /// Write a cover PNG for `slug` and refresh the cached texture.
+    fn save_cover_png(&mut self, slug: &str, png: &[u8], status: &str) {
+        match self.store.load(slug) {
+            Ok(book) => {
+                match crate::core::book::store::write_atomic(&book.cover_path(), png) {
+                    Ok(()) => {
+                        tracing::info!("cover saved book={} bytes={}", slug, png.len());
+                        self.cover_tex = None; // force a texture reload
+                        self.book_ui.status = Some(status.to_string());
+                    }
+                    Err(e) => {
+                        self.book_ui.status = Some(format!("Could not save the cover: {e}"));
+                    }
+                }
+            }
+            Err(e) => {
+                self.book_ui.status = Some(format!("Could not load the book: {e}"));
+            }
+        }
+    }
+
     /// Cancel the in-flight cover design, if any.
     pub fn cancel_cover(&mut self) {
         if let Some(cg) = &self.cover_gen {
@@ -1171,6 +1268,10 @@ replaces it."
                     self.auth.state = ConnectUiState::Idle;
                     self.screen = Screen::Connect;
                 }
+            }
+            // Only the upload channel produces this; harmless to handle here too.
+            CoverEvent::BadImage(e) => {
+                self.book_ui.status = Some(format!("Could not use that image: {e}"));
             }
         }
     }
@@ -1242,6 +1343,7 @@ impl eframe::App for App {
         self.poll_auth();
         self.poll_gen(ctx);
         self.poll_cover(ctx);
+        self.poll_cover_upload(ctx);
         // Never let a drill's clock run (or its timer expire) while the user is on
         // another screen: auto-pause on leaving the typing stage, auto-resume on
         // return. A manual pause is left alone.
@@ -1440,7 +1542,7 @@ fn top_bar(app: &mut App, ui: &mut egui::Ui) {
             // Below ~1235px the eyebrow labels would push the right cluster into the
             // mode tabs (they collide and overlap); drop the labels first. The window's
             // min inner size guarantees the label-less bar always fits.
-            let tight = ui.max_rect().width() < 1235.0;
+            let tight = ui.max_rect().width() < 1150.0;
             ui.horizontal(|ui| {
                 // Wordmark lockup: literary serif + quiet descriptor.
                 ui.label(

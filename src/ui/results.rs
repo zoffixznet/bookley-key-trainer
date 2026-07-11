@@ -149,6 +149,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             let mut go = false;
             ui.horizontal(|ui| {
                 let size = egui::vec2(270.0, 46.0);
+                // add_sized centers the labels; min_size alone leaves them
+                // left-aligned with lopsided padding on some backends.
                 let primary = egui::Button::new(
                     egui::RichText::new(label)
                         .size(17.0)
@@ -156,9 +158,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         .color(p.ink_850),
                 )
                 .fill(p.verdigris)
-                .min_size(size)
                 .corner_radius(CornerRadius::same(9));
-                if ui.add(primary).clicked() {
+                if ui.add_sized(size, primary).clicked() {
                     go = true;
                 }
                 if !is_book {
@@ -171,9 +172,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     )
                     .fill(p.ink_850)
                     .stroke(Stroke::new(1.0, p.edge))
-                    .min_size(size)
                     .corner_radius(CornerRadius::same(9));
-                    if ui.add(secondary).clicked() {
+                    if ui.add_sized(size, secondary).clicked() {
                         app.config.content_mode = ContentMode::Random;
                         app.save_config();
                         app.start_session();

@@ -366,6 +366,11 @@ fn book_detail(app: &mut App, ui: &mut egui::Ui, slug: &str) {
                         if ui.button(label).clicked() {
                             app.start_cover_generation();
                         }
+                        if app.cover_upload.is_some() {
+                            ui.spinner();
+                        } else if ui.button("Upload cover").clicked() {
+                            app.start_cover_upload();
+                        }
                     }
                     if ui.button("Export Markdown").clicked() {
                         export_markdown(app, &book);
@@ -560,15 +565,16 @@ still possible."
             if !all_typed {
                 if let Some(n) = first_untyped {
                     ui.add_space(6.0);
-                    let b = egui::Button::new(
-                        egui::RichText::new(format!("Type chapter {n}"))
-                            .size(15.0)
-                            .strong()
-                            .color(p.ink_850),
+                    if theme::action_button(
+                        ui,
+                        &p,
+                        &format!("Type chapter {n}"),
+                        15.0,
+                        egui::vec2(210.0, 40.0),
+                        true,
                     )
-                    .fill(p.verdigris)
-                    .min_size(egui::vec2(210.0, 40.0));
-                    if ui.add(b).clicked() {
+                    .clicked()
+                    {
                         start_typing(app, slug);
                     }
                 }
@@ -596,15 +602,16 @@ still possible."
                 "Make this chapter the last chapter of the book",
             );
             ui.add_space(4.0);
-            let b = egui::Button::new(
-                egui::RichText::new("Generate next chapter")
-                    .size(15.0)
-                    .strong()
-                    .color(p.ink_850),
+            if theme::action_button(
+                ui,
+                &p,
+                "Generate next chapter",
+                15.0,
+                egui::vec2(210.0, 40.0),
+                true,
             )
-            .fill(p.verdigris)
-            .min_size(egui::vec2(210.0, 40.0));
-            if ui.add(b).clicked() {
+            .clicked()
+            {
                 let cont = app.book_ui.continuation.trim().to_string();
                 if cont.is_empty() {
                     // Blank input: confirm they want fully AI-invented content.
@@ -617,16 +624,17 @@ still possible."
                 }
             }
         } else if let Some(n) = first_untyped {
-            let b = egui::Button::new(
-                egui::RichText::new(format!("Type chapter {n}"))
-                    .size(15.0)
-                    .strong()
-                    .color(p.ink_850),
-            )
-            .fill(p.verdigris)
-            .min_size(egui::vec2(210.0, 40.0));
             ui.horizontal(|ui| {
-                if ui.add(b).clicked() {
+                if theme::action_button(
+                    ui,
+                    &p,
+                    &format!("Type chapter {n}"),
+                    15.0,
+                    egui::vec2(210.0, 40.0),
+                    true,
+                )
+                .clicked()
+                {
                     start_typing(app, slug);
                 }
                 ui.add_space(8.0);

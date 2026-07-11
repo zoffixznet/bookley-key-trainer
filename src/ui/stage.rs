@@ -20,7 +20,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
     // Paste mode with no session yet: show the paste box.
     if app.config.content_mode == ContentMode::Paste && app.session.is_none() {
-        theme::centered_column(ui, COLUMN_W, |ui| paste_entry(app, ui));
+        theme::page_scroll(ui, |ui| {
+            theme::centered_column(ui, COLUMN_W, |ui| paste_entry(app, ui));
+        });
         return;
     }
 
@@ -130,16 +132,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .size(13.0),
                 );
                 ui.add_space(6.0);
-                let btn = egui::Button::new(
-                    egui::RichText::new("Resume (Space)")
-                        .size(16.0)
-                        .strong()
-                        .color(p.ink_850),
+                if theme::action_button(
+                    ui,
+                    &p,
+                    "Resume (Space)",
+                    16.0,
+                    egui::vec2(180.0, 40.0),
+                    true,
                 )
-                .fill(p.verdigris)
-                .min_size(egui::vec2(180.0, 40.0))
-                .corner_radius(CornerRadius::same(8));
-                if ui.add(btn).clicked() {
+                .clicked()
+                {
                     app.toggle_pause();
                 }
             });
@@ -699,28 +701,66 @@ fn paste_entry(app: &mut App, ui: &mut egui::Ui) {
             .size(12.5),
     );
     ui.add_space(8.0);
+    // The box keeps a fixed height and scrolls internally, so a huge paste can never
+    // push the Start button out of reach (the page around it scrolls too).
     theme::card(&p).show(ui, |ui| {
-        ui.add(
-            egui::TextEdit::multiline(&mut app.paste_input)
-                .desired_rows(8)
-                .desired_width(f32::INFINITY)
-                .frame(egui::Frame::new())
-                .hint_text("Paste or type any text here, then press Start."),
-        );
+        ui.set_width(ui.available_width());
+        egui::ScrollArea::vertical()
+            .id_salt("paste_input")
+            .max_height(300.0)
+            .auto_shrink([false, true])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .show(ui, |ui| {
+                let response = ui.add(
+                    egui::TextEdit::multiline(&mut app.paste_input)
+                        .desired_rows(10)
+                        .desired_width(f32::INFINITY)
+                        .frame(egui::Frame::new())
+                        .hint_text("Paste or type any text here, then press Start."),
+                );
+                // Right-click paste for people who do not reach for Ctrl+V.
+                response.context_menu(|ui| {
+                    if ui.button("Paste").clicked() {
+                        if let Some(text) = clipboard_text() {
+                            app.paste_input.push_str(&text);
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Paste, replacing").clicked() {
+                        if let Some(text) = clipboard_text() {
+                            app.paste_input = text;
+                        }
+                        ui.close();
+                    }
+                    if ui.button("Clear").clicked() {
+                        app.paste_input.clear();
+                        ui.close();
+                    }
+                });
+            });
     });
+    ui.label(
+        egui::RichText::new("Right-click the box to paste; Ctrl+V works too.")
+            .color(p.ghost)
+            .size(12.0),
+    );
     ui.add_space(10.0);
     ui.horizontal(|ui| {
         let empty = app.paste_input.trim().is_empty();
-        let btn = egui::Button::new(
-            egui::RichText::new("Start typing this")
-                .size(15.0)
-                .strong()
-                .color(p.ink_850),
-        )
-        .fill(p.verdigris)
-        .min_size(egui::vec2(180.0, 38.0))
-        .corner_radius(CornerRadius::same(8));
-        if ui.add_enabled(!empty, btn).clicked() {
+        let clicked = ui
+            .add_enabled_ui(!empty, |ui| {
+                theme::action_button(
+                    ui,
+                    &p,
+                    "Start typing this",
+                    15.0,
+                    egui::vec2(180.0, 38.0),
+                    true,
+                )
+            })
+            .inner
+            .clicked();
+        if clicked {
             app.start_session();
         }
         if app.paste_input.chars().count() > 20_000 {
@@ -730,4 +770,17 @@ fn paste_entry(app: &mut App, ui: &mut egui::Ui) {
             );
         }
     });
+}
+
+/// Read the clipboard for the paste box's context menu. egui only delivers clipboard
+/// content on Ctrl+V events, so menu-driven pasting reads it directly via arboard.
+fn clipboard_text() -> Option<String> {
+    match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+        Ok(text) if !text.is_empty() => Some(text),
+        Ok(_) => None,
+        Err(e) => {
+            tracing::warn!("clipboard read failed: {e}");
+            None
+        }
+    }
 }

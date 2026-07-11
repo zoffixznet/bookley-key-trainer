@@ -339,6 +339,32 @@ pub fn control_row<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui
     .inner
 }
 
+/// A fixed-size action button with its label properly centered (a Button given only
+/// min_size leaves the label left-aligned with lopsided padding on some backends).
+/// `accent` fills it as the primary action; plain ones read as secondary.
+pub fn action_button(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    label: &str,
+    text_size: f32,
+    size: egui::Vec2,
+    accent: bool,
+) -> egui::Response {
+    let text = if accent {
+        egui::RichText::new(label)
+            .size(text_size)
+            .strong()
+            .color(p.ink_850)
+    } else {
+        egui::RichText::new(label).size(text_size)
+    };
+    let mut button = egui::Button::new(text).corner_radius(CornerRadius::same(8));
+    if accent {
+        button = button.fill(p.verdigris);
+    }
+    ui.add_sized(size, button)
+}
+
 /// A paper card frame sitting on the ground.
 pub fn card(p: &Palette) -> egui::Frame {
     egui::Frame::new()

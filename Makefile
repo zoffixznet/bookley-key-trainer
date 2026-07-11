@@ -97,6 +97,10 @@ install: build ## Install for the current user: ~/.local/bin binary, desktop ent
 	done
 	install -Dm755 target/release/bookley-key-trainer $(INSTALL_BIN)
 	install -Dm644 assets/bookley-key-trainer.desktop $(INSTALL_DESKTOP)
+	@# Launchers (KDE, GNOME) resolve Exec with the session PATH, which often lacks
+	@# ~/.local/bin even when the shell has it; point the entry at the absolute path.
+	@sed -i "s|^Exec=.*|Exec=$(INSTALL_BIN)|; s|^TryExec=.*|TryExec=$(INSTALL_BIN)|" $(INSTALL_DESKTOP)
+	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database $(HOME)/.local/share/applications 2>/dev/null || true
 	@for s in $(ICON_SIZES); do \
 		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
 			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png; \
@@ -133,6 +137,8 @@ install-claude: ## Install the Claude Code CLI from Anthropic's APT repo (Debian
 
 desktop-install: ## Install the .desktop entry and icons for the current user (~/.local/share)
 	install -Dm644 assets/bookley-key-trainer.desktop $(INSTALL_DESKTOP)
+	@sed -i "s|^Exec=.*|Exec=$(INSTALL_BIN)|; s|^TryExec=.*|TryExec=$(INSTALL_BIN)|" $(INSTALL_DESKTOP)
+	@command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database $(HOME)/.local/share/applications 2>/dev/null || true
 	@for s in $(ICON_SIZES); do \
 		install -Dm644 assets/icon/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png \
 			$(HOME)/.local/share/icons/hicolor/$${s}x$${s}/apps/bookley-key-trainer.png; \

@@ -39,7 +39,10 @@ make install
 
 That puts a single self-contained binary at `~/.local/bin/bookley-key-trainer` (fonts,
 sounds, the word list, and the novelist plugin are all embedded) plus a desktop entry
-and icons. Make sure `~/.local/bin` is on your PATH. Installing a newer version over an
+and icons. The desktop entry points at the installed binary by absolute path, so
+launchers and taskbar pins work even on desktops whose session PATH does not include
+`~/.local/bin`. Make sure `~/.local/bin` is on your PATH for the command line. Installing
+a newer version over an
 old one replaces those same files (including any pre-rename `bookley`-named copies);
 `make uninstall` removes exactly them. Your books, settings, and stats live under
 `~/.local/share/bookley-key-trainer` and `~/.config`, and are never touched by install
@@ -66,7 +69,9 @@ Settings as the default; default 2 minutes) and show results when time is up. In
 mode Backspace is a drillable key like any other. Any session can be paused (Space
 resumes); paused time never counts toward the metrics, and the target text is veiled so
 it cannot be read ahead. Paste and Book sessions have a "Reset stats" control that
-zeroes the timer and metrics without losing your place in the text.
+zeroes the timer and metrics without losing your place in the text. The paste box takes
+text by right-click menu or Ctrl+V, keeps a fixed height (long pastes scroll inside it),
+and the Start button always stays in reach.
 
 Every keypress lands with a real typewriter sound: three distinct CC0 (public-domain)
 single-key recordings for ordinary keys and two deeper Hermes Precisa 305 space-bar and
@@ -126,6 +131,9 @@ app asks you to confirm, and the author invents everything, including the title.
   (cover, title page, chapters); the premise and language you entered are generation
   inputs and never appear in them. Exports open in your system's default viewer and
   land in the app's data dir under `exports/` (the app shows the exact path).
+- "Upload cover" on the book page picks an image from disk (PNG, JPEG, or WebP) through
+  your desktop's file dialog and uses it as the cover; it is bounded to the cover canvas
+  and replaces any generated one.
 - "Generate cover" on the book page asks Claude to design a cover as a self-contained
   SVG from the book's actual title and text, which the app validates and renders to a
   PNG; it appears on the book page and as the full-bleed first page of the PDF. If a
