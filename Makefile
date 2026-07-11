@@ -1,7 +1,9 @@
 # Bookley Key Trainer - repo-root front door.
 # `make` or `make help` lists the targets.
 
-CARGO ?= cargo
+# Find cargo even when rustup was just installed by `make deps` and this shell's PATH
+# does not know about ~/.cargo/bin yet.
+CARGO ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 FAKE_CLAUDE := $(abspath tests/fake_claude.sh)
 
 .DEFAULT_GOAL := help
@@ -27,13 +29,36 @@ help: ## List every target with a one-line description
 	@echo "Bookley Key Trainer - make targets:"
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
-deps: ## Verify the toolchain and required system libraries
-	@command -v $(CARGO) >/dev/null || { echo "cargo not found: install Rust via https://rustup.rs"; exit 1; }
-	@command -v cc >/dev/null || { echo "cc not found: install a C toolchain (build-essential)"; exit 1; }
-	@command -v pkg-config >/dev/null || { echo "pkg-config not found"; exit 1; }
-	@pkg-config --exists alsa || { echo "ALSA dev headers not found: sudo apt install libasound2-dev (needed for the typewriter key sound)"; exit 1; }
-	@rustc --version && cargo --version
-	@echo "Toolchain OK. GUI needs the usual X11/Wayland dev libs; audio needs libasound2-dev."
+deps: ## Install missing build dependencies: system libraries and the Rust toolchain (uses sudo only when something is missing)
+	@if command -v apt-get >/dev/null 2>&1; then \
+		missing=""; \
+		command -v cc >/dev/null 2>&1 || missing="$$missing build-essential"; \
+		command -v pkg-config >/dev/null 2>&1 || missing="$$missing pkg-config"; \
+		command -v curl >/dev/null 2>&1 || missing="$$missing curl"; \
+		pkg-config --exists alsa 2>/dev/null || missing="$$missing libasound2-dev"; \
+		pkg-config --exists wayland-client 2>/dev/null || missing="$$missing libwayland-dev"; \
+		pkg-config --exists xkbcommon 2>/dev/null || missing="$$missing libxkbcommon-dev"; \
+		pkg-config --exists x11 2>/dev/null || missing="$$missing libx11-dev"; \
+		if [ -n "$$missing" ]; then \
+			echo "Installing missing system packages:$$missing (asks for your sudo password)"; \
+			sudo apt-get update && sudo apt-get install -y $$missing; \
+		else \
+			echo "System libraries: all present."; \
+		fi; \
+	else \
+		echo "Non-apt system: install the equivalents of build-essential, pkg-config,"; \
+		echo "curl, libasound2-dev, libwayland-dev, libxkbcommon-dev, and libx11-dev"; \
+		echo "with your package manager, then re-run make deps for the Rust check."; \
+	fi
+	@if [ -x "$(CARGO)" ] || command -v cargo >/dev/null 2>&1; then \
+		echo "Rust: $$($(CARGO) --version)"; \
+	else \
+		echo "Installing the Rust toolchain via rustup (https://rustup.rs)..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+		echo "Rust installed under ~/.cargo. This Makefile finds it by itself, so you"; \
+		echo "can run make run right away; new terminals pick it up automatically."; \
+	fi
+	@echo "Dependencies OK."
 
 build: ## Compile the app (release)
 	$(CARGO) build --release

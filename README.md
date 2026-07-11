@@ -9,16 +9,27 @@ Written in Rust with egui/eframe. Everything is driven from the `Makefile`.
 
 ## Quick start
 
+The app targets Linux (X11 and Wayland). A fresh Debian/Ubuntu install ships without
+`make` (and without git or a compiler), and `make` cannot bootstrap itself, so first:
+
 ```
-make run
+sudo apt install -y make git
 ```
 
-That builds the release binary and launches the app. `make help` lists every target.
+Then, from a clone of this repo:
 
-Requirements: a Rust toolchain (https://rustup.rs), the usual Linux GUI libraries
-(X11/Wayland, OpenGL or Vulkan), and the ALSA dev headers for the typewriter key sound
-(`sudo apt install libasound2-dev` on Debian/Ubuntu). `make deps` sanity checks the
-toolchain and libraries.
+```
+make deps   # one-time: installs the Rust toolchain and system libraries (sudo as needed)
+make run    # builds the release binary and launches the app
+```
+
+`make run` does not run `make deps` for you; run it once per machine. It only installs
+what is missing (on a machine that already has everything it touches nothing and never
+asks for sudo): build-essential, pkg-config, curl, the ALSA headers for the typewriter
+key sound, the Wayland/X11/xkbcommon dev libraries, and rustup when there is no Rust.
+If it installs Rust, the Makefile finds `~/.cargo/bin/cargo` by itself, so `make run`
+works immediately; new terminals pick Rust up automatically. On non-apt distributions
+it prints the package list to install manually. `make help` lists every target.
 
 To install for your user (so the clone can be deleted afterwards):
 

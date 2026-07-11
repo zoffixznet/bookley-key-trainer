@@ -292,3 +292,15 @@ each; newest at the bottom of each section.
   make uninstall also remove pre-rename bookley-named binary/desktop/icons so upgrades
   never leave stale copies. The Cargo package/lib name stays "bookley"; only the bin
   target is renamed.
+
+## Bootstrap (round 8)
+
+- make deps became an installer instead of a checker: on apt systems it installs only
+  what is missing (build-essential, pkg-config, curl, libasound2-dev, libwayland-dev,
+  libxkbcommon-dev, libx11-dev) with sudo, and installs rustup when there is no Rust;
+  on a machine that has everything it does nothing and never asks for sudo. Non-apt
+  systems get the package list printed. The Makefile resolves cargo from
+  ~/.cargo/bin as a fallback so make run works in the same shell that just ran deps.
+  make run / make install intentionally do NOT depend on deps (documented in the
+  Quick start, along with the fact that a fresh Ubuntu lacks make itself and needs
+  sudo apt install make git first).
