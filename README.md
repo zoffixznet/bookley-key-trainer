@@ -7,6 +7,43 @@ have a book you can export as Markdown or PDF.
 
 Written in Rust with egui/eframe. Everything is driven from the `Makefile`.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/book-mode.png" width="840" alt="Typing a chapter in Book mode: the manuscript with typed text bright and upcoming text ghosted, live WPM and accuracy, and the on-screen keyboard below">
+  <br>
+  <em>Book mode: type a real novel Claude writes for you, one chapter at a time.</em>
+</p>
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/books.png" alt="The books manager showing a book jacket with cover, chapter list, and export buttons">
+      <br><sub><b>Your books.</b> Manage titles, generate or upload a cover, and export the whole thing to Markdown or a typeset PDF.</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/results.png" alt="The results screen with a WPM-over-time graph, consistency, and weak-key breakdown">
+      <br><sub><b>Results.</b> WPM over time, accuracy, consistency, and the keys you fumble most.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/word-drill.png" alt="A timed word drill with a flowing stream of words and the on-screen keyboard highlighting the next key">
+      <br><sub><b>Word and paste drills.</b> Timed practice with an on-screen keyboard that shows the next key (and Shift when you need it).</sub>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/random-keys.png" alt="Random-keys mode showing key-name chips and the full keyboard including the nav cluster and function row">
+      <br><sub><b>Random keys.</b> Drill the <em>whole</em> keyboard, arrows, the nav cluster, function row, and all.</sub>
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/screenshots/dark-theme.png" width="620" alt="The same word drill in the dark ink theme">
+  <br>
+  <em>Light "foolscap" and dark "ink" themes.</em>
+</p>
+
 ## Quick start
 
 The app targets Linux (X11 and Wayland). A fresh Debian/Ubuntu install ships without

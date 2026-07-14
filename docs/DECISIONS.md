@@ -322,3 +322,17 @@ each; newest at the bottom of each section.
   KDE and friends resolve Exec against the session PATH, which often lacks ~/.local/bin
   even when interactive shells have it, which made launcher/taskbar launches fail with
   "could not find the program".
+
+## README screenshots (round 10)
+
+- The README now opens with a screenshot gallery (docs/screenshots/): a book-mode hero
+  plus a grid of the books manager, results, word drill, random keys, and the dark
+  theme. Shots were captured from the real release binary on a headless Xvfb display
+  (never the user's screen), against a throwaway BOOKLEY_DATA_DIR holding a clean demo
+  book ("The Lamplighter's Daughter") so no personal book data appears in a public repo.
+  The book-mode hero was driven live (typed a clean prefix) to show the typed/current/
+  upcoming styling; the cover was rendered with the app's own bundled Young Serif via
+  ImageMagick. PNGs were optimized with optipng (about 1.7 MB down to 656 KB).
+- Fixed a small HUD bug found while composing the hero: in Book and Paste modes the
+  right-aligned context label (chapter/book title) could overrun leftward into the
+  "progress" stat on the same row. The label now truncates.

@@ -344,7 +344,11 @@ fn hud(app: &mut App, ui: &mut egui::Ui) {
                     .map(|s| s.target.title.clone())
                     .unwrap_or_default(),
             };
-            ui.label(egui::RichText::new(context).color(p.ghost).size(12.5));
+            // Truncate so a long book/chapter title cannot overrun leftward into the
+            // "progress" stat (they share this HUD row).
+            ui.add(
+                egui::Label::new(egui::RichText::new(context).color(p.ghost).size(12.5)).truncate(),
+            );
         });
     });
 }
